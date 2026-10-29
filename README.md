@@ -165,6 +165,29 @@ The return page is not proof of payment. The browser only tells the server *whic
 order to capture; the server re-reads the capture from PayPal, checks amount, currency and
 ownership, and only then flips the order to `PAID`.
 
+### Demo payments (test checkout without PayPal)
+
+Before a sandbox app exists you can still exercise the full checkout → confirmation-email
+flow. Set:
+
+```bash
+DEMO_PAYMENTS=true
+```
+
+The checkout then shows a **“Simulate payment (test mode)”** button (and a test-mode banner).
+Pressing it calls `POST /api/demo/complete-payment`, which reuses the same `markOrderPaid`
+logic as a real capture — the order becomes `PAID`, the confirmation email with the QR code is
+queued and sent, and the success page renders exactly as after a real payment. No money moves.
+
+Guardrails:
+
+- The button and the endpoint are only available when `DEMO_PAYMENTS=true`; otherwise the route
+  answers `404`.
+- Amounts and currency always come from the stored order, never the request.
+- Demo captures use synthetic `DEMO-<order.id>` identifiers, so demo payments are easy to spot
+  (and delete) in the admin.
+- **Never** enable it on a deployment that sells real tickets.
+
 ## 5. Email and QR codes
 
 Resend is used when `RESEND_API_KEY` is set:
@@ -343,6 +366,7 @@ Enough to run and test the whole flow, including sandbox payments:
    | `INITIAL_ADMIN_PASSWORD` | at least 12 characters |
    | `PAYPAL_MODE` | `sandbox` |
    | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | from the PayPal sandbox app (optional — can also be saved in the admin UI) |
+   | `DEMO_PAYMENTS` | `true` to test checkout without PayPal (optional — **omit** on a live store) |
 
    Do **not** set `DATABASE_URL_TEST` in production, and do not set `RESEND_API_KEY` when
    testing with Ethereal SMTP.

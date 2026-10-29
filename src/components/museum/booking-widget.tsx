@@ -13,6 +13,7 @@ import { createTranslator, type Locale } from '@/lib/i18n/messages'
 import type { MonthAvailability } from '@/lib/museum/availability'
 import { BookingCalendar } from './booking-calendar'
 import { PaypalCheckout } from './paypal-checkout'
+import { DemoPayment } from './demo-payment'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -57,11 +58,13 @@ const COUNTRY_CODES = ['+212', '+33', '+34', '+44', '+1', '+49', '+39', '+31', '
 export function BookingWidget({
   settings,
   paypal,
+  demo,
   initialMonth,
   locale,
 }: {
   settings: BookingSettings
   paypal: { enabled: boolean; clientId: string | null; currency: string }
+  demo: { enabled: boolean }
   initialMonth: MonthAvailability
   locale: Locale
 }) {
@@ -309,6 +312,13 @@ export function BookingWidget({
                     <p className="text-xs text-muted-foreground">{t('info.email')}</p>
                   </div>
 
+                  {demo.enabled ? (
+                    <Alert>
+                      <AlertTitle>{t('demo.bannerTitle')}</AlertTitle>
+                      <AlertDescription>{t('demo.bannerBody')}</AlertDescription>
+                    </Alert>
+                  ) : null}
+
                   {paypal.enabled && paypal.clientId ? (
                     <PaypalCheckout
                       publicId={order.publicId}
@@ -319,7 +329,7 @@ export function BookingWidget({
                         router.push(`/checkout/success?order=${encodeURIComponent(order.publicId)}`)
                       }}
                     />
-                  ) : (
+                  ) : demo.enabled ? null : (
                     <Alert variant="destructive">
                       <AlertTitle>{t('errors.paypalUnavailable')}</AlertTitle>
                       <AlertDescription>
@@ -329,6 +339,16 @@ export function BookingWidget({
                       </AlertDescription>
                     </Alert>
                   )}
+
+                  {demo.enabled ? (
+                    <DemoPayment
+                      publicId={order.publicId}
+                      locale={locale}
+                      onSuccess={() => {
+                        router.push(`/checkout/success?order=${encodeURIComponent(order.publicId)}`)
+                      }}
+                    />
+                  ) : null}
 
                   <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={resetOrder}>
                     {t('actions.change')}

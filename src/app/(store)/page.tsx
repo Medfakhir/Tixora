@@ -8,6 +8,7 @@ import { getMonthAvailability } from '@/lib/museum/availability'
 import { parseMonthKey } from '@/lib/museum/dates'
 import { getTranslator } from '@/lib/i18n/server'
 import { getPayPal, publicPayPalConfig } from '@/lib/settings/service'
+import { demoPaymentsEnabled } from '@/lib/config/env'
 
 export const dynamic = 'force-dynamic'
 
@@ -128,6 +129,7 @@ export default async function MuseumBookingPage({
             supportPhone: settings.supportPhone,
           }}
           paypal={{ enabled: publicPaypal.enabled, clientId: publicPaypal.clientId, currency: settings.currency }}
+          demo={{ enabled: demoPaymentsEnabled }}
           initialMonth={initialMonth}
           locale={locale}
         />

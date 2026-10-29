@@ -34,6 +34,9 @@ const schema = z.object({
   PAYPAL_WEBHOOK_ID_LIVE: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM: z.string().optional(),
+  // Demo payments bypass PayPal and mark an order paid server-side. Strictly opt-in
+  // via an environment variable so it can never be enabled by accident. See README.
+  DEMO_PAYMENTS: z.string().optional(),
   MUSEUM_TIMEZONE: z.string().default('Africa/Casablanca'),
   MUSEUM_CURRENCY: z.string().default('EUR'),
   NEXTAUTH_SECRET: z.string().optional(),
@@ -59,3 +62,5 @@ if (!parsed.success) {
 export const env = parsed.data
 export const isProduction = env.NODE_ENV === 'production'
 export const isTest = env.NODE_ENV === 'test'
+/** True only when DEMO_PAYMENTS is explicitly "true". Never enable on a live store. */
+export const demoPaymentsEnabled = env.DEMO_PAYMENTS === 'true'

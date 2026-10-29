@@ -6,7 +6,7 @@ import { getMuseumSettings } from '@/lib/museum/settings'
 import { museumPaymentDescription } from '@/lib/museum/orders'
 import { recordAudit } from '@/lib/auth/guards'
 import { queueTicketDelivery, processDeliveryQueue } from '@/lib/email/delivery'
-import { env } from '@/lib/config/env'
+import { env, demoPaymentsEnabled } from '@/lib/config/env'
 import type { OrderStatus, PaymentEnvironment } from '@prisma/client'
 
 /** Statuses that already represent a settled PayPal capture and must not be re-captured. */
@@ -146,6 +146,68 @@ export async function completePayment(input: { publicId: string; paypalOrderId: 
   if (queued) await flushDeliveries()
 
   return { ...result, queued }
+}
+
+/**
+ * Test-only path that marks an order paid without contacting PayPal, so the whole
+ * checkout → confirmation-email flow can be exercised end to end before real
+ * credentials exist.
+ *
+ * This is deliberately NOT a general bypass. It refuses to do anything unless the
+ * deployment set DEMO_PAYMENTS=true, and even then it reuses the same `markOrderPaid`
+ * entry point as a real capture (amount/currency are read from the order, never the
+ * caller), so the order moves through the identical status + delivery pipeline. The
+ * synthetic identifiers are prefixed `DEMO-` so demo revenue is easy to spot and purge.
+ */
+export async function completeDemoPayment(input: { publicId: string }) {
+  if (!demoPaymentsEnabled) {
+    throw new OrderError('DEMO_DISABLED', 'Demo payments are not enabled on this site.', 404)
+  }
+
+  const order = await prisma.order.findUnique({ where: { publicId: input.publicId }, include: { lines: true } })
+  if (!order) throw new OrderError('ORDER_NOT_FOUND', 'Order not found', 404)
+
+  if (SETTLED_STATUSES.includes(order.status)) {
+    return {
+      order,
+      newlyMarkedPaid: false,
+      ticketsCommitted: 0,
+      needsManualResolution: false,
+      queued: false,
+      alreadyPaid: true as const,
+    }
+  }
+  if (!['PENDING', 'AWAITING_PAYMENT'].includes(order.status)) {
+    throw new OrderError('ORDER_NOT_PAYABLE', `This order can no longer be paid (${order.status}).`, 409)
+  }
+
+  const syntheticId = `DEMO-${order.id}`
+
+  const result = await markOrderPaid({
+    orderId: order.id,
+    environment: 'SANDBOX',
+    paypalOrderId: syntheticId,
+    captureId: syntheticId,
+    amountMinor: order.totalMinor,
+    currency: order.currency,
+    raw: { demo: true, source: 'DEMO_PAYMENT', at: new Date().toISOString() },
+  })
+
+  const queued = result.newlyMarkedPaid ? (await queueTicketDelivery(order.id)).queued : false
+  if (queued) await flushDeliveries()
+
+  if (result.newlyMarkedPaid) {
+    await recordAudit({
+      actorType: 'SYSTEM',
+      action: 'DEMO_PAYMENT',
+      entityType: 'Order',
+      entityId: order.id,
+      summary: `Demo payment simulated for ${order.reference} (DEMO_PAYMENTS enabled — no money moved)`,
+      metadata: { amountMinor: order.totalMinor, currency: order.currency, syntheticId },
+    })
+  }
+
+  return { ...result, queued, alreadyPaid: false as const }
 }
 
 function assertMatchesOrder(
