@@ -365,11 +365,13 @@ async function deliverOne(deliveryId: string): Promise<{ ok: boolean; error?: st
 
     const general = await getGeneral()
     const orderUrl = `${appUrl()}/${publicId ? `order/${publicId}` : ''}`
-    // Links carry the ticket id, never the internal storage key.
+    // Links are only for downloadable PDF tickets (legacy catalogue orders). Museum
+    // orders attach a QR image instead and have no per-ticket download, so iterating
+    // over `attachments` here would index past `selected` and crash the send.
     const links = buildTicketLinks(
-      attachments.map((attachment, index) => ({
-        fileName: attachment.filename,
-        url: publicId ? `${appUrl()}/api/orders/${publicId}/tickets/${selected[index].id}` : '',
+      selected.map((ticket, index) => ({
+        fileName: `${delivery.order?.reference ?? 'ticket'}-${index + 1}.pdf`,
+        url: publicId ? `${appUrl()}/api/orders/${publicId}/tickets/${ticket.id}` : '',
       })),
     )
     const template = await templateFor(delivery.templateKey as TemplateKey)
