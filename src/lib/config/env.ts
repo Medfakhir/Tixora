@@ -37,8 +37,9 @@ const schema = z.object({
   MUSEUM_TIMEZONE: z.string().default('Africa/Casablanca'),
   MUSEUM_CURRENCY: z.string().default('EUR'),
   NEXTAUTH_SECRET: z.string().optional(),
-  INITIAL_ADMIN_EMAIL: z.string().email().optional(),
-  INITIAL_ADMIN_PASSWORD: z.string().min(12).optional(),
+  // INITIAL_ADMIN_* are seed-only: scripts/seed.mjs reads them from process.env
+  // directly, so they are deliberately NOT validated here. Making them boot-time
+  // requirements (or validating a placeholder) would break production builds.
 })
 
 const source = { ...process.env }
