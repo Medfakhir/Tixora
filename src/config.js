@@ -6,6 +6,7 @@
  */
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -35,11 +36,21 @@ const baseUrl = String(env.BASE_URL || env.RENDER_EXTERNAL_URL || `http://localh
 
 const dataDir = dir(env.DATA_DIR, 'data');
 const liveTicketsDir = dir(env.TICKETS_DIR, 'tickets');
-// Some hosts (Vercel) only allow writing to /tmp; a missing directory is not fatal,
-// because the database mode needs neither data/ nor tickets/ on disk.
-try {
-  fs.mkdirSync(dataDir, { recursive: true });
-} catch {}
+// Some hosts (Vercel) only allow writing to /tmp. If the configured data folder
+// cannot be created, fall back to the OS temp dir instead of refusing to start:
+// in database mode it only holds the mail outbox and small caches.
+function writableDir(preferred) {
+  try {
+    fs.mkdirSync(preferred, { recursive: true });
+    return preferred;
+  } catch {}
+  const fallback = path.join(os.tmpdir(), 'bp-data');
+  try {
+    fs.mkdirSync(fallback, { recursive: true });
+  } catch {}
+  return fallback;
+}
+const writableDataDir = writableDir(dataDir);
 const localHost = (() => {
   try {
     return /^(localhost|127(\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i.test(new URL(baseUrl).hostname);
@@ -141,7 +152,7 @@ const config = {
   secureCookies: baseUrl.startsWith('https://'),
   trustProxy,
   timezone: String(env.TIMEZONE || 'Africa/Casablanca').trim(),
-  dataDir,
+  dataDir: writableDataDir,
   ticketsDir,
   liveTicketsDir,
   sandboxTicketsDir,

@@ -15,9 +15,15 @@ module.exports = async function handler(req, res) {
     res.end(JSON.stringify({ error: 'Unauthorized' }));
     return;
   }
-  const { booking } = await getApp();
-  await booking.reconcile();
-  res.statusCode = 200;
-  res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify({ ok: true }));
+  try {
+    const { booking } = await getApp();
+    await booking.reconcile();
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true }));
+  } catch (e) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Reconcile failed.', detail: String((e && e.message) || e) }));
+  }
 };

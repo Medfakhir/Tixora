@@ -43,7 +43,14 @@ class Store {
     this.mailFile = path.join(dataDir, 'mail.json');
     this.activityFile = path.join(dataDir, 'activity.json');
     this.paypalFile = path.join(dataDir, 'paypal.json');
-    for (const d of [this.dir, this.ordersDir, this.locksDir, this.outboxDir]) fs.mkdirSync(d, { recursive: true });
+    // A read-only filesystem (Vercel) must not stop the app from starting in
+    // database mode, where these folders are unused. Writes will still fail
+    // loudly later if file mode is used on such a host.
+    try {
+      for (const d of [this.dir, this.ordersDir, this.locksDir, this.outboxDir]) fs.mkdirSync(d, { recursive: true });
+    } catch (e) {
+      this._dirError = e;
+    }
     this._settings = null;
     this._settingsMtime = -1;
     this._mail = null;
