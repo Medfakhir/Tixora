@@ -11,7 +11,7 @@ const {
   send,
   sendJson,
   sendHtml,
-  sendFile,
+  sendBuffer,
   serializeCookie,
   appendHeader,
   rateLimiter,
@@ -68,6 +68,16 @@ function install(app, { config, booking, store }) {
     send(res, 200, 'User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /tickets/\n', { 'Content-Type': 'text/plain; charset=utf-8' })
   );
 
+  // Cron (Vercel schedules this on production): run the background reconcile job.
+  // Protected by CRON_SECRET; Vercel sends "Authorization: Bearer <CRON_SECRET>".
+  app.get('/api/cron/reconcile', async (req, res) => {
+    const secret = String(config.cronSecret || '');
+    const auth = String(req.headers.authorization || '');
+    if (!secret || !safeEqual(auth, `Bearer ${secret}`)) throw new HttpError(401, 'Unauthorized');
+    await booking.reconcile();
+    sendJson(res, 200, { ok: true });
+  });
+
   app.get('/api/config', (req, res) => sendJson(res, 200, booking.publicConfig()));
 
   app.get('/api/availability', async (req, res) => {
@@ -98,16 +108,24 @@ function install(app, { config, booking, store }) {
     sendHtml(res, 200, downloadPage(order, booking));
   });
 
+  // Ticket files are read through the stock (a file on disk, or a row in the
+  // database on hosts without one) and streamed from memory.
+  async function sendTicket(req, res, order, n) {
+    const file = await booking.stockFor(order).read(order.tickets[n - 1].path);
+    sendBuffer(req, res, file.buffer, {
+      contentType: file.mime,
+      downloadName: booking.ticketFileName(order, n - 1),
+      inline: req.query.view === '1',
+      cacheControl: 'private, no-store',
+    });
+  }
+
   app.get('/tickets/:id/:token/:n', async (req, res) => {
     if (!downloadLimit(key(req))) throw new HttpError(429, 'Too many requests. Please wait a moment.');
     const order = await booking.orderForDownload(req.params.id, req.params.token);
     const n = parseInt(req.params.n, 10);
     if (!(n >= 1 && n <= order.tickets.length)) throw new HttpError(404, 'File not found.');
-    await sendFile(req, res, booking.stockFor(order).absolute(order.tickets[n - 1].path), {
-      downloadName: booking.ticketFileName(order, n - 1),
-      inline: req.query.view === '1',
-      cacheControl: 'private, no-store',
-    });
+    await sendTicket(req, res, order, n);
   });
 
   // ---- PayPal webhook -----------------------------------------------------------------
@@ -315,11 +333,7 @@ function install(app, { config, booking, store }) {
       if (!order) throw new HttpError(404, 'Order not found.');
       const n = parseInt(req.params.n, 10);
       if (!(n >= 1 && n <= (order.tickets || []).length)) throw new HttpError(404, 'File not found.');
-      await sendFile(req, res, booking.stockFor(order).absolute(order.tickets[n - 1].path), {
-        downloadName: booking.ticketFileName(order, n - 1),
-        inline: req.query.view === '1',
-        cacheControl: 'private, no-store',
-      });
+      await sendTicket(req, res, order, n);
     })
   );
 
@@ -489,7 +503,9 @@ function install(app, { config, booking, store }) {
   app.get('/api/admin/activity', admin(async (req, res) => sendJson(res, 200, await booking.listActivity(req.query))));
 
   // ---- static pages -----------------------------------------------------------------------
-  app.static('/admin', path.join(config.root, 'admin'));
+  // The dashboard lives under public/ so that hosts which serve static files
+  // straight from there (Vercel) can deliver it without a running server.
+  app.static('/admin', path.join(config.root, 'public', 'admin'));
   app.static('', path.join(config.root, 'public'), { maxAge: 300 });
 }
 

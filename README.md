@@ -53,13 +53,29 @@ tickets/
 - You get an email when stock runs low (Settings → "Warn me when stock falls to").
 - **Test payments use a separate folder.** While test payments (PayPal Sandbox) are on, tickets come from `tickets-sandbox/` instead of `tickets/`. Anyone can open a free PayPal test account, so test payments must never receive your real tickets. On the dashboard's **Ticket stock** page, switch between **Real tickets** and **Test tickets**: uploads go to the folder you have chosen, and the folder in use is marked. Put a few sample tickets in the test folder (or run `npm run sample-tickets` while test payments are on).
 
+**With `DATABASE_URL` set (section 8)** there are no ticket files: each ticket is a row in the `bp_tickets` table and its bytes are stored in the database. Reserve, sold, dates and the "never sold twice" rule work exactly the same — the moves (`stock → reserved → sold`) are database updates instead of file renames. This is what lets the app run on **Vercel**, where the disk is thrown away between requests.
+
 ---
 
 ## 3. Go live: checklist
 
 ### a) Hosting
 
-The app needs a host that runs Node.js, keeps files between restarts and can send email. Put it on a subdomain such as `book.bahiapalace.com`, with HTTPS switched on. (Vercel, where many websites live, can't run it: it doesn't keep files.)
+The app needs a host that runs Node.js and can send email. Put it on a subdomain such as `book.bahiapalace.com`, with HTTPS switched on. It runs on a normal server (files on disk) or on **Vercel with a Neon database** (see below and section 8).
+
+**Vercel (with a Neon database):** Vercel wipes its filesystem between requests, so the app can only run there when nothing needs to stay on disk. Set **`DATABASE_URL`** (a [Neon](https://neon.com) database, section 8) and the app keeps **everything in the database — orders, settings, email, PayPal keys and the ticket files themselves** (`bp_tickets`, stored as `bytea`). The included `vercel.json` serves the booking page and dashboard as static files and sends every other request to one serverless function, and a daily cron runs the background job. You do **not** need a disk.
+1. Import the repository in Vercel (Project → Add New → Project) and set the **Framework Preset** to **Other**. The `vercel.json` in the repo overrides the build step, so nothing is built.
+2. Open **Settings → Environment Variables** and add (Production):
+   - `DATABASE_URL` — your Neon connection string (required).
+   - `SESSION_SECRET` — a long random string. Required here: without a writable disk each instance would otherwise generate its own key and SMTP passwords could not be decrypted after a redeploy.
+   - `CRON_SECRET` — a long random string. Vercel sends it to the cron route so only Vercel can trigger it.
+   - `BASE_URL` — your public address (`https://book.bahiapalace.com`).
+   - `ADMIN_PASSWORD` — the dashboard password (leave it out to keep the dashboard off).
+   - `DATA_DIR` — `/tmp/bp-data` (only used for the mail outbox and caches; the database holds the real data).
+   - PayPal and email settings — add them in the dashboard after the first deploy (sections c and d).
+3. Deploy, then open `/admin`. On the first request the app creates its tables in Neon and imports any files it finds.
+4. Tickets are uploaded through the dashboard as usual; the bytes are stored in the database and survive redeploys.
+5. The included cron (`0 3 * * *`) expires abandoned checkouts and returns unpaid tickets to stock once a day. For a busier site, change the schedule in `vercel.json` (subject to your Vercel plan's limits).
 
 **Render (recommended, about $7.25 a month):** Render runs the app, keeps the server secure and up to date, provides HTTPS and backs up your orders and tickets every day (7 days of copies). The included `render.yaml` sets everything up.
 1. Put this folder in a **private GitHub repository**. Leave out `.env`, `data/`, `demo/` and the files in `tickets/`. The included `.gitignore` does this if you use git.
@@ -218,38 +234,40 @@ Server messages are printed to the app's log (Render: the service's **Logs** tab
 
 ## 8. Optional: Neon Postgres database
 
-The app runs with **no database** by default. If you prefer to keep your data in Postgres,
-set **`DATABASE_URL`** (for example a free [Neon](https://neon.com) database) and the app
-stores the following there instead of in the JSON files:
+The app runs with **no database** by default. If you prefer to keep your data in Postgres — or you want to run on **Vercel**, which has no disk — set **`DATABASE_URL`** (for example a free [Neon](https://neon.com) database) and the app stores **everything** there instead of in files:
 
 - orders, the activity log and the small documents: **settings**, **email/SMTP settings + templates**, **PayPal keys** and the low-stock/alert **state**
 - a fingerprint (SHA-256) of every **sold ticket**, so a ticket can never be sold twice, even after a redeploy
+- the **ticket files themselves**: one row per ticket in `bp_tickets`, with the bytes stored in a `bytea` column. Uploading, reserving and selling become database rows changing status, so nothing needs a disk.
 
-Ticket files, the email outbox and the per-file fingerprint cache **stay on disk** — they
-belong with the files themselves, so keep the `tickets/` folder (and a disk on Render).
+Only the mail **outbox** (used when e-mail is not configured) and a small per-file hash cache stay on disk; both are throwaway.
 
 **How to switch on:**
 1. Create a database at <https://neon.com> (or any Postgres) and copy its connection string.
 2. Set it in the environment: `DATABASE_URL=postgresql://user:password@host/db?sslmode=require`.
-   On Render, add it in the service's **Environment** tab (`DATABASE_URL`). The included
+   On Render or Vercel, add it in the service's **Environment Variables**. The included
    `render.yaml` asks for it when you create the Blueprint.
 3. Also set a fixed **`SESSION_SECRET`** when using a database, so every instance encrypts and
    decrypts the saved SMTP password with the same key (otherwise each instance generates its own
-   `data/secret.key`).
+   `data/secret.key`). This is **required on Vercel**, where each instance has its own throwaway disk.
 4. Start (or redeploy) the app. On the first start the app creates its tables and **imports any
    existing files** (`data/*.json`, `data/orders/*.json`, `data/activity.json`, `data/sold-hashes.log`)
    into the database, so nothing is lost. The log prints how many rows were imported.
+   Files already in `tickets/stock/` are **not** uploaded automatically; add them from the dashboard,
+   or leave them where they are if you keep using disk mode.
 
 Notes:
 - Only Neon's SQL-over-HTTP endpoint is used, through Node's built-in `fetch` — still **no npm packages**.
 - Leave `DATABASE_URL` empty to go back to plain files (the database is simply ignored).
 - Advanced: `DATABASE_ENDPOINT` overrides the `/sql` URL (for a Neon-compatible proxy).
+- Because the HTTP endpoint runs one statement at a time, each stock change happens under the app's
+  cross-instance lock (`bp_locks`), so several Vercel instances can share one database safely.
 
 ## 9. For developers
 
 - `npm test` runs the end-to-end tests: PayPal and SMTP are simulated, including declines, pending payments, webhooks, refunds, races for the last tickets, expiry and crash recovery. The database layer is tested too, against a fake `/sql` server.
 - `npm run sample-tickets` creates sample PDFs (marked "not valid") in the test folder `tickets-sandbox/stock/`, used by PayPal Sandbox and simulated payments. It never writes to your real `tickets/` folder.
-- Code: `server.js` (start), `src/booking.js` (order flow), `src/payments.js` (PayPal keys, payment modes, webhook setup), `src/stock.js` (ticket files), `src/neon.js` + `src/dbstore.js` + `src/dbschema.js` (optional Postgres storage), `src/paypal.js`, `src/mailer.js` (SMTP), `src/routes.js` (HTTP), `public/` (booking page), `admin/` (dashboard).
-- Database tables (all prefixed `bp_`): `bp_documents`, `bp_orders`, `bp_activity`, `bp_ticket_sold`, `bp_locks`. They are created automatically; nothing to run by hand.
+- Code: `server.js` (start), `src/booking.js` (order flow), `src/payments.js` (PayPal keys, payment modes, webhook setup), `src/stock.js` (ticket files), `src/dbstock.js` (the same ticket stock kept in the database, for Vercel), `src/neon.js` + `src/dbstore.js` + `src/dbschema.js` (optional Postgres storage), `src/paypal.js`, `src/mailer.js` (SMTP), `src/routes.js` (HTTP), `public/` (booking page), `public/admin/` (dashboard), `api/` + `vercel.json` (Vercel entry points and cron).
+- Database tables (all prefixed `bp_`): `bp_documents`, `bp_orders`, `bp_activity`, `bp_ticket_sold`, `bp_tickets`, `bp_locks`. They are created automatically; nothing to run by hand.
 - Order statuses: `pending` → `paid` → `fulfilled`. Other statuses: `payment_pending`, `needs_attention`, `expired`, `cancelled`, `failed`, `refunded`, `reversed`.
 - Font: Familjen Grotesk, a grotesque with ink traps close to PolySans (SIL Open Font License, included in `public/fonts/`).

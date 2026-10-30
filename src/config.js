@@ -24,7 +24,10 @@ const list = (v) =>
     .filter(Boolean);
 const dir = (v, d) => path.resolve(ROOT, (v || '').trim() || d);
 
-const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+let pkg = { version: '0.0.0' };
+try {
+  pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+} catch {}
 const isProduction = String(env.NODE_ENV || '').trim() === 'production';
 const port = int(env.PORT, 3000);
 // On Render the service's own address (https://NAME.onrender.com) is used until BASE_URL is set.
@@ -32,7 +35,11 @@ const baseUrl = String(env.BASE_URL || env.RENDER_EXTERNAL_URL || `http://localh
 
 const dataDir = dir(env.DATA_DIR, 'data');
 const liveTicketsDir = dir(env.TICKETS_DIR, 'tickets');
-fs.mkdirSync(dataDir, { recursive: true });
+// Some hosts (Vercel) only allow writing to /tmp; a missing directory is not fatal,
+// because the database mode needs neither data/ nor tickets/ on disk.
+try {
+  fs.mkdirSync(dataDir, { recursive: true });
+} catch {}
 const localHost = (() => {
   try {
     return /^(localhost|127(\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i.test(new URL(baseUrl).hostname);
@@ -53,8 +60,14 @@ function loadSecret() {
     fs.writeFileSync(file, s, { flag: 'wx', mode: 0o600 });
     return s;
   } catch (e) {
-    if (e.code === 'EEXIST') return fs.readFileSync(file, 'utf8').trim();
-    throw e;
+    if (e.code === 'EEXIST') {
+      try {
+        return fs.readFileSync(file, 'utf8').trim();
+      } catch {}
+    }
+    // A read-only filesystem (Vercel): keep a random per-instance secret rather
+    // than refusing to start. Set SESSION_SECRET so sessions survive restarts.
+    return s;
   }
 }
 
@@ -152,6 +165,8 @@ const config = {
   databaseUrl: String(env.DATABASE_URL || '').trim(),
   // Advanced: override the /sql endpoint (Neon-compatible proxy, or tests).
   databaseEndpoint: String(env.DATABASE_ENDPOINT || '').trim(),
+  // Secret Vercel sends as "Authorization: Bearer ..." when calling the cron route.
+  cronSecret: String(env.CRON_SECRET || '').trim(),
 };
 
 module.exports = config;

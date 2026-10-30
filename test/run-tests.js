@@ -61,13 +61,117 @@ function fakeDb() {
   const activity = [];
   const locks = new Map();
   const sold = new Map();
+  const tickets = [];
   const one = (o) => ({ rows: o && Object.keys(o).length ? [o] : [], rowCount: 1, fields: [], command: '' });
   const rows = (r) => ({ rows: r, rowCount: r.length, fields: [], command: '' });
+
+  // The statements src/dbstock.js runs against bp_tickets.
+  const byName = (a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0);
+  function ticketsQuery(q, params) {
+    if (q.startsWith('INSERT INTO bp_tickets')) {
+      tickets.push({
+        id: params[0], folder: params[1], type_id: params[2], valid_date: params[3], status: params[4],
+        order_id: null, filename: params[5], mime: params[6], size: params[7], sha256: params[8],
+        data: params[9], reserved_at: null, sold_at: null,
+      });
+      return one({});
+    }
+    if (/^UPDATE bp_tickets SET status = 'reserved'/.test(q)) {
+      const ids = params.slice(2);
+      for (const t of tickets) if (t.folder === params[1] && t.status === 'stock' && ids.includes(t.id)) { t.status = 'reserved'; t.order_id = params[0]; t.reserved_at = new Date().toISOString(); }
+      return one({});
+    }
+    if (/^UPDATE bp_tickets SET status = 'stock'/.test(q)) {
+      const ids = params.slice(1);
+      for (const t of tickets) if (t.folder === params[0] && t.status === 'reserved' && ids.includes(t.id)) { t.status = 'stock'; t.order_id = null; t.reserved_at = null; }
+      return one({});
+    }
+    if (/^UPDATE bp_tickets SET status = 'sold'/.test(q)) {
+      const ids = params.slice(2);
+      for (const t of tickets) if (t.folder === params[1] && t.status === 'reserved' && ids.includes(t.id)) { t.status = 'sold'; t.order_id = params[0]; t.sold_at = new Date().toISOString(); }
+      return one({});
+    }
+    if (/^DELETE FROM bp_tickets WHERE id = \$1$/.test(q)) {
+      for (let i = tickets.length - 1; i >= 0; i--) if (tickets[i].id === params[0]) tickets.splice(i, 1);
+      return one({});
+    }
+    if (/^DELETE FROM bp_tickets WHERE folder = \$1 AND id IN/.test(q)) {
+      const ids = params.slice(1);
+      for (let i = tickets.length - 1; i >= 0; i--) if (tickets[i].folder === params[0] && ids.includes(tickets[i].id)) tickets.splice(i, 1);
+      return one({});
+    }
+    if (/^SELECT count\(\*\) AS n FROM bp_tickets WHERE folder = \$1 AND status = 'reserved'$/.test(q)) {
+      return rows([{ n: tickets.filter((t) => t.folder === params[0] && t.status === 'reserved').length }]);
+    }
+    if (/^SELECT type_id, valid_date, count\(\*\) AS n FROM bp_tickets/.test(q)) {
+      const ids = params.slice(1);
+      const map = new Map();
+      for (const t of tickets) if (t.folder === params[0] && t.status === 'stock' && ids.includes(t.type_id)) {
+        const k = t.type_id + '|' + (t.valid_date || '');
+        map.set(k, (map.get(k) || 0) + 1);
+      }
+      return rows([...map].map(([k, n]) => { const [type_id, vd] = k.split('|'); return { type_id, valid_date: vd || null, n }; }));
+    }
+    const listFiles = q.match(/^SELECT filename FROM bp_tickets WHERE folder = \$1 AND type_id = \$2 AND status = 'stock' AND valid_date (IS NULL|= \$3) ORDER BY filename$/);
+    if (listFiles) {
+      const dated = listFiles[1] !== 'IS NULL';
+      return rows(tickets.filter((t) => t.folder === params[0] && t.type_id === params[1] && t.status === 'stock' && (dated ? t.valid_date === params[2] : t.valid_date == null)).sort(byName).map((t) => ({ filename: t.filename })));
+    }
+    const pick = q.match(/^SELECT id, filename, sha256, valid_date FROM bp_tickets WHERE folder = \$1 AND type_id = \$2 AND status = 'stock' AND valid_date (IS NULL|= \$3) ORDER BY filename$/);
+    if (pick) {
+      const dated = pick[1] !== 'IS NULL';
+      return rows(tickets.filter((t) => t.folder === params[0] && t.type_id === params[1] && t.status === 'stock' && (dated ? t.valid_date === params[2] : t.valid_date == null)).sort(byName).map((t) => ({ id: t.id, filename: t.filename, sha256: t.sha256, valid_date: t.valid_date || null })));
+    }
+    if (/^SELECT id FROM bp_tickets WHERE folder = \$1 AND status = 'reserved' AND id IN/.test(q)) {
+      const ids = params.slice(1);
+      return rows(tickets.filter((t) => t.folder === params[0] && t.status === 'reserved' && ids.includes(t.id)).map((t) => ({ id: t.id })));
+    }
+    if (/^SELECT filename, sha256 FROM bp_tickets WHERE id = \$1$/.test(q)) {
+      const t = tickets.find((x) => x.id === params[0]);
+      return t ? rows([{ filename: t.filename, sha256: t.sha256 }]) : rows([]);
+    }
+    if (/^SELECT order_id FROM bp_tickets WHERE sha256 = \$1 AND status = 'reserved' LIMIT 1$/.test(q)) {
+      const t = tickets.find((x) => x.sha256 === params[0] && x.status === 'reserved');
+      return t ? rows([{ order_id: t.order_id }]) : rows([]);
+    }
+    if (/^SELECT filename FROM bp_tickets WHERE folder = \$1 AND sha256 = \$2 AND status = 'stock' LIMIT 1$/.test(q)) {
+      const t = tickets.find((x) => x.folder === params[0] && x.sha256 === params[1] && x.status === 'stock');
+      return t ? rows([{ filename: t.filename }]) : rows([]);
+    }
+    const names = q.match(/^SELECT filename FROM bp_tickets WHERE folder = \$1 AND type_id = \$2 AND status = \$3 AND valid_date (IS NULL|= \$4)$/);
+    if (names) {
+      const dated = names[1] !== 'IS NULL';
+      return rows(tickets.filter((t) => t.folder === params[0] && t.type_id === params[1] && t.status === params[2] && (dated ? t.valid_date === params[3] : t.valid_date == null)).map((t) => ({ filename: t.filename })));
+    }
+    const removeSel = q.match(/^SELECT id FROM bp_tickets WHERE folder = \$1 AND type_id = \$2 AND filename = \$3 AND status = 'stock' AND valid_date (IS NULL|= \$4) LIMIT 1$/);
+    if (removeSel) {
+      const dated = removeSel[1] !== 'IS NULL';
+      const t = tickets.find((x) => x.folder === params[0] && x.type_id === params[1] && x.filename === params[2] && x.status === 'stock' && (dated ? x.valid_date === params[3] : x.valid_date == null));
+      return t ? rows([{ id: t.id }]) : rows([]);
+    }
+    if (/^SELECT id, filename, sha256 FROM bp_tickets WHERE folder = \$1 AND status = 'stock' ORDER BY filename$/.test(q)) {
+      return rows(tickets.filter((t) => t.folder === params[0] && t.status === 'stock').sort(byName).map((t) => ({ id: t.id, filename: t.filename, sha256: t.sha256 })));
+    }
+    if (/^SELECT id, order_id, reserved_at FROM bp_tickets WHERE folder = \$1 AND status = 'reserved'$/.test(q)) {
+      return rows(tickets.filter((t) => t.folder === params[0] && t.status === 'reserved').map((t) => ({ id: t.id, order_id: t.order_id, reserved_at: t.reserved_at })));
+    }
+    if (/^SELECT filename, mime, size, data FROM bp_tickets WHERE id = \$1$/.test(q)) {
+      const t = tickets.find((x) => x.id === params[0]);
+      return t ? rows([{ filename: t.filename, mime: t.mime, size: t.size, data: t.data }]) : rows([]);
+    }
+    if (/^SELECT filename, mime, size FROM bp_tickets WHERE id = \$1$/.test(q)) {
+      const t = tickets.find((x) => x.id === params[0]);
+      return t ? rows([{ filename: t.filename, mime: t.mime, size: t.size }]) : rows([]);
+    }
+    throw new Error('fakeDb: unsupported bp_tickets query: ' + q);
+  }
+
   return {
-    state: { docs, orders, activity, locks, sold },
+    state: { docs, orders, activity, locks, sold, tickets },
     async query(text, params = []) {
       const q = String(text).replace(/\s+/g, ' ').trim();
       if (/^CREATE TABLE IF NOT EXISTS/i.test(q)) return rows([]);
+      if (/^CREATE INDEX IF NOT EXISTS/i.test(q)) return rows([]);
       if (/^SELECT 1 AS ok$/i.test(q)) return rows([{ ok: '1' }]);
 
       if (/^SELECT name, data FROM bp_documents$/i.test(q)) return rows([...docs.entries()].map(([name, data]) => ({ name, data })));
@@ -115,6 +219,8 @@ function fakeDb() {
         if (cur && cur.owner === params[1]) locks.delete(params[0]);
         return one({});
       }
+
+      if (/bp_tickets/i.test(q)) return ticketsQuery(q, params);
       throw new Error('fakeDb: unsupported query: ' + q);
     },
   };
@@ -131,8 +237,11 @@ function fakeNeonServer(db) {
           const { query, params } = JSON.parse(body || '{}');
           const out = await db.query(query, params || []);
           const fields = (out.rows[0] ? Object.keys(out.rows[0]) : []).map((name) => ({ name, dataTypeID: 25 }));
+          // Real Postgres text output returns bytea as "\x<hex>"; mirror that so
+          // DbStock's toBuffer() hex path is what the tests exercise.
+          const enc = (v) => (Buffer.isBuffer(v) ? '\\x' + v.toString('hex') : v);
           rs.setHeader('Content-Type', 'application/json');
-          rs.end(JSON.stringify({ fields, rows: out.rows.map((row) => Object.values(row)), rowCount: out.rows.length, command: 'SELECT' }));
+          rs.end(JSON.stringify({ fields, rows: out.rows.map((row) => Object.values(row).map(enc)), rowCount: out.rows.length, command: 'SELECT' }));
         } catch (e) {
           rs.statusCode = 400;
           rs.setHeader('Content-Type', 'application/json');
@@ -1879,6 +1988,110 @@ async function main() {
     await neon.close();
   });
 
+  await test('database ticket stock: upload, reserve, finalize, release, read, dates and duplicates', async () => {
+    const { DbStore } = require('../src/dbstore');
+    const { DbStock } = require('../src/dbstock');
+    const { NeonClient } = require('../src/neon');
+    const db = fakeDb();
+    const neon = await fakeNeonServer(db);
+    const dir = path.join(TMP, 'dbstock-' + Math.random().toString(36).slice(2));
+    fs.mkdirSync(dir, { recursive: true });
+    const store = new DbStore(dir, new NeonClient('postgresql://u:p@fake/db', { endpoint: neon.url }));
+    await store.init();
+    const mk = (folder) => new DbStock({ db: store.db, folder, lock: (n, fn) => store.withLock(n, fn), index: store.ticketIndex() });
+    const stock = mk('sandbox');
+
+    // ---- upload and count ----
+    const pdf = samplePdf({ type: 'adult', number: 'DB-1' });
+    const up = await stock.addUpload('adult', null, 'ticket-1.pdf', pdf);
+    assert.ok(/~ticket-1\.pdf$/.test(up.path), 'path keeps the file name for the extension');
+    assert.equal((await stock.counts(['adult'])).adult.open, 1);
+
+    // the same bytes cannot be uploaded twice into one folder
+    await assert.rejects(stock.addUpload('adult', null, 'copy.pdf', pdf), (e) => e.code === 'duplicate');
+    // non-ticket extensions and fake PDFs are refused
+    await assert.rejects(stock.addUpload('adult', null, 'virus.exe', Buffer.from('MZ')), (e) => e.code === 'invalid');
+    await assert.rejects(stock.addUpload('adult', null, 'fake.pdf', Buffer.from('hello')), (e) => e.code === 'invalid');
+
+    // ---- reserve -> reserved, read bytes, release -> back in stock ----
+    const held = await stock.reserve('BP-ABCDEFGH', null, [{ typeId: 'adult', qty: 1 }]);
+    assert.equal(held.length, 1);
+    assert.equal((await stock.counts(['adult'])).adult.open, 0);
+    assert.equal(await stock.countReserved(), 1);
+
+    const file = await stock.read(held[0].reservedPath);
+    assert.ok(file.buffer.equals(pdf), 'the exact bytes are read back');
+    assert.equal(file.filename, 'ticket-1.pdf');
+    assert.equal(file.mime, 'application/pdf');
+    assert.equal((await stock.stat(held[0].reservedPath)).size, pdf.length);
+
+    await stock.release('BP-ABCDEFGH', held);
+    assert.equal((await stock.counts(['adult'])).adult.open, 1);
+    assert.equal(await stock.countReserved(), 0);
+
+    // ---- reserve -> finalize -> sold, fingerprint recorded, never re-sold ----
+    const held2 = await stock.reserve('BP-ABCDEFGH', null, [{ typeId: 'adult', qty: 1 }]);
+    const sold = await stock.finalize('BP-ABCDEFGH', held2);
+    assert.equal(sold.length, 1);
+    assert.equal(sold[0].original, 'ticket-1.pdf');
+    assert.equal(await store.ticketIndex().lookup(held2[0].hash), 'BP-ABCDEFGH');
+    assert.equal((await stock.counts(['adult'])).adult.open, 0);
+    await assert.rejects(stock.addUpload('adult', null, 'again.pdf', pdf), (e) => e.code === 'duplicate');
+
+    // a sold ticket can still be read (it lives in the same row)
+    const soldFile = await stock.read(sold[0].path);
+    assert.ok(soldFile.buffer.equals(pdf));
+
+    // ---- all-or-nothing reserve ----
+    const two = [samplePdf({ number: 'DB-2' }), samplePdf({ number: 'DB-3' })];
+    await stock.addUpload('adult', null, 'a.pdf', two[0]);
+    await stock.addUpload('adult', null, 'b.pdf', two[1]);
+    await assert.rejects(stock.reserve('BP-23456789', null, [{ typeId: 'adult', qty: 5 }]), (e) => e.code === 'SOLD_OUT');
+    assert.equal((await stock.counts(['adult'])).adult.open, 2, 'a failed reserve takes nothing');
+    assert.equal(await stock.countReserved(), 0);
+
+    // ---- date-specific stock is used before the any-day pool ----
+    const datedPdf = samplePdf({ number: 'DATED-1' });
+    await stock.addUpload('child', day(5), 'dated.pdf', datedPdf);
+    const pick = await stock.reserve('BP-ABCDEFGH', day(5), [{ typeId: 'child', qty: 1 }]);
+    assert.equal(pick.length, 1);
+    const counts = await stock.counts(['child']);
+    assert.equal(counts.child.dated[day(5)] || 0, 0, 'the dated ticket was chosen for that day');
+    await stock.release('BP-ABCDEFGH', pick);
+
+    // ---- orphans come back, active orders keep their hold ----
+    const orphan = await stock.reserve('BP-ABCDEFGH', null, [{ typeId: 'adult', qty: 1 }]);
+    await stock.recoverOrphans(async () => true, 0);
+    assert.equal(await stock.countReserved(), 1, 'an active order keeps its reserved ticket');
+    await stock.recoverOrphans(async () => false, 0);
+    assert.equal(await stock.countReserved(), 0, 'an orphaned reservation is returned');
+    assert.equal((await stock.counts(['adult'])).adult.open, 2);
+
+    // ---- removeFile ----
+    const list = await stock.listFiles('adult');
+    assert.equal(list.total, 2);
+    assert.equal(await stock.removeFile('adult', null, list.files[0]), true);
+    assert.equal((await stock.listFiles('adult')).total, 1);
+
+    // ---- findDuplicates (rows injected directly, as a legacy file import could) ----
+    const twin = samplePdf({ number: 'TWIN-DB' });
+    await stock.addUpload('adult', null, 'twin-a.pdf', twin);
+    db.state.tickets.push({ id: 'dup-row', folder: 'sandbox', type_id: 'adult', valid_date: null, status: 'stock', order_id: null, filename: 'twin-b.pdf', mime: 'application/pdf', size: twin.length, sha256: require('crypto').createHash('sha256').update(twin).digest('hex'), data: twin, reserved_at: null, sold_at: null });
+    const scan = await stock.findDuplicates({ fix: true });
+    assert.equal(scan.duplicates.length, 1);
+    assert.equal(scan.duplicates[0].keep, 'twin-a.pdf');
+    assert.equal((await stock.listFiles('adult')).total, 2, 'the duplicate row was removed');
+
+    // ---- live and sandbox stocks are isolated ----
+    const live = mk('live');
+    assert.equal((await live.counts(['adult'])).adult.open, 0);
+    await live.addUpload('adult', null, 'live-1.pdf', samplePdf({ number: 'LIVE-1' }));
+    assert.equal((await live.counts(['adult'])).adult.open, 1);
+    assert.equal((await stock.counts(['adult'])).adult.open, 2, 'the sandbox stock is untouched');
+
+    await neon.close();
+  });
+
   await test('full app with DATABASE_URL: createApp loads the database before serving', async () => {
     const config = require('../src/config');
     const db = fakeDb();
@@ -1890,7 +2103,10 @@ async function main() {
     assert.equal(typeof app2.ready.then, 'function', 'createApp exposes a ready promise');
     await app2.ready;
     const { DbStore } = require('../src/dbstore');
+    const { DbStock } = require('../src/dbstock');
     assert.ok(app2.store instanceof DbStore, 'the database store is in use');
+    assert.ok(app2.payments.dbTickets, 'tickets are stored in the database');
+    assert.ok(app2.payments.stock() instanceof DbStock, 'the app serves the database-backed stock');
     await app2.store.saveSettings({ ...app2.booking.settings(), siteName: 'Neon Shop' });
     assert.equal(app2.booking.settings().siteName, 'Neon Shop');
     // PayPal settings now round-trip through the database too.

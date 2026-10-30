@@ -17,9 +17,8 @@
  *   reversed         chargeback / reversal reported by PayPal
  */
 const fs = require('fs');
-const fsp = fs.promises;
 const path = require('path');
-const { HttpError, mimeFor, rateKey } = require('./http');
+const { HttpError, rateKey } = require('./http');
 const {
   ORDER_ID_RE,
   token,
@@ -861,9 +860,11 @@ class Booking {
       const attachments = [];
       let size = 0;
       for (let i = 0; i < order.tickets.length; i++) {
-        const abs = this.stockFor(order).absolute(order.tickets[i].path);
-        size += (await fsp.stat(abs)).size;
-        attachments.push({ filename: this.ticketFileName(order, i), path: abs, contentType: mimeFor(abs) });
+        // Ticket bytes come from the stock (disk or database) as a buffer, so the
+        // same code works whether tickets are files or rows in Postgres.
+        const file = await this.stockFor(order).read(order.tickets[i].path);
+        size += file.size || file.buffer.length;
+        attachments.push({ filename: this.ticketFileName(order, i), content: file.buffer, contentType: file.mime || 'application/pdf' });
       }
       const attach = size <= 15 * 1024 * 1024;
       const msg = emails.ticketEmail({ order, settings: s, downloadUrl: this.downloadUrl(order), attached: attach, templates: this.mailConfig.templates });
@@ -1457,7 +1458,8 @@ class Booking {
     const st = this.payments.status();
     for (const m of ['sandbox', 'live']) {
       const dir = this.payments.ticketsDir(m);
-      st.modes[m].tickets = m === st.mode || fs.existsSync(path.join(dir, 'stock')) ? await this._ticketTotal(this.payments.stock(m)) : 0;
+      const has = m === st.mode || this.payments.dbTickets || fs.existsSync(path.join(dir, 'stock'));
+      st.modes[m].tickets = has ? await this._ticketTotal(this.payments.stock(m)) : 0;
     }
     st.liveOrdersInProgress = this._liveOrdersInProgress(await this.store.listOrders()).length;
     return st;

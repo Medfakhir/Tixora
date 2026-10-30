@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Stock } = require('./stock');
+const { DbStock } = require('./dbstock');
 const { PayPalClient, MockPayPal } = require('./paypal');
 const { HttpError } = require('./http');
 const { nowIso, log, logError } = require('./util');
@@ -106,12 +107,15 @@ function webhookProblem(e) {
 }
 
 class Payments {
-  constructor({ config, store }) {
+  constructor({ config, store, dbTickets = false }) {
     this.config = config;
     this.store = store;
+    // With a database configured, the ticket stock itself lives in bp_tickets
+    // (no disk needed, shared by every instance). Otherwise it is files on disk.
+    this.dbTickets = !!dbTickets;
     this._clients = new Map(); // mode -> { sig, client }
     this._appClients = new Map(); // "mode|clientId" -> { sig, client } for orders made with other keys
-    this._stocks = new Map(); // folder -> Stock
+    this._stocks = new Map(); // folder -> Stock | DbStock
     // Called before keys are replaced or removed (Booking links older orders to their keys).
     this.beforeKeysChange = null;
   }
@@ -283,36 +287,39 @@ class Payments {
 
   ticketsDir(mode) {
     // Simulated payments (demo) share the test folder: they must never use real tickets.
+    // With a database, the "folder" is a column value instead of a path.
+    if (this.dbTickets) return `bp_tickets/${mode === 'live' ? 'live' : 'sandbox'}`;
     return mode === 'live' ? this.config.liveTicketsDir : this.config.sandboxTicketsDir;
   }
 
-  /** The ticket folder of a mode (one Stock per folder; live and demo share one). */
+  /** The ticket stock of a mode (one instance per folder; live and demo share one). */
   stock(mode = this.activeMode) {
     const dir = this.ticketsDir(mode);
     let s = this._stocks.get(dir);
     if (!s) {
-      const cacheName = dir === this.config.liveTicketsDir ? 'ticket-fingerprints.json' : 'ticket-fingerprints-sandbox.json';
-      s = new Stock(dir, this.config.dataDir, {
-        lock: (name, fn) => this.store.withLock(name, fn, { waitMs: 90000 }),
-        cacheName,
-        // With a database configured, sold-ticket fingerprints live in Neon so a
-        // redeploy (fresh disk) can never re-sell a ticket that was already sold.
-        index: typeof this.store.ticketIndex === 'function' ? this.store.ticketIndex() : undefined,
-      });
-      s.ensureTypeDirs(this.store.getSettings().ticketTypes.map((t) => t.id));
+      const index = typeof this.store.ticketIndex === 'function' ? this.store.ticketIndex() : undefined;
+      const lock = (name, fn) => this.store.withLock(name, fn, { waitMs: 90000 });
+      if (this.dbTickets) {
+        s = new DbStock({ db: this.store.db, folder: mode === 'live' ? 'live' : 'sandbox', lock, index });
+      } else {
+        const cacheName = dir === this.config.liveTicketsDir ? 'ticket-fingerprints.json' : 'ticket-fingerprints-sandbox.json';
+        s = new Stock(dir, this.config.dataDir, { lock, cacheName, index });
+        s.ensureTypeDirs(this.store.getSettings().ticketTypes.map((t) => t.id));
+      }
       this._stocks.set(dir, s);
     }
     return s;
   }
 
-  /** Ticket folders in use: the active one plus any other that exists on disk. */
+  /** Ticket folders in use: the active one plus any other that has stock. */
   knownStocks() {
     const out = new Map();
     const active = this.stock();
     out.set(active.root, active);
     for (const m of KEY_MODES) {
       const dir = this.ticketsDir(m);
-      if (!out.has(dir) && fs.existsSync(path.join(dir, 'stock'))) out.set(dir, this.stock(m));
+      if (out.has(dir)) continue;
+      if (this.dbTickets || fs.existsSync(path.join(dir, 'stock'))) out.set(dir, this.stock(m));
     }
     return [...out.values()];
   }

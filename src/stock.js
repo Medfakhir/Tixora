@@ -17,6 +17,7 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { safeFilename, logError, log } = require('./util');
+const { mimeFor } = require('./http');
 
 const TICKET_EXT = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pkpass'];
 const DATE_DIR_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -599,6 +600,20 @@ class Stock {
     const abs = path.resolve(this.root, rel);
     if (!abs.startsWith(this.root + path.sep)) throw new Error('Path outside tickets folder');
     return abs;
+  }
+
+  /** Read a ticket's bytes (same shape as DbStock.read). */
+  async read(rel) {
+    const abs = this.absolute(rel);
+    const buffer = await fsp.readFile(abs);
+    return { buffer, mime: mimeFor(abs), filename: path.basename(abs), size: buffer.length };
+  }
+
+  /** Size and type of a ticket without its bytes (same shape as DbStock.stat). */
+  async stat(rel) {
+    const abs = this.absolute(rel);
+    const st = await fsp.stat(abs);
+    return { mime: mimeFor(abs), filename: path.basename(abs), size: st.size };
   }
 }
 

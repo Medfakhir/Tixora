@@ -23,7 +23,8 @@ function createApp(cfg = config) {
     ? new DbStore(cfg.dataDir, cfg.databaseUrl, cfg.databaseEndpoint ? { endpoint: cfg.databaseEndpoint } : {})
     : new Store(cfg.dataDir);
   // PayPal keys and the payment mode (dashboard PayPal page, or .env), one ticket folder per mode.
-  const payments = new Payments({ config: cfg, store });
+  // With DATABASE_URL the ticket stock itself lives in the database (bp_tickets).
+  const payments = new Payments({ config: cfg, store, dbTickets: !!cfg.databaseUrl });
   const mailer = new Mailer({ smtp: cfg.smtp, from: cfg.mail.from, replyTo: cfg.mail.replyTo, outboxDir: store.outboxDir });
   const booking = new Booking({ config: cfg, store, payments, mailer });
   const app = new App({ trustProxy: cfg.trustProxy });
@@ -37,7 +38,8 @@ function createApp(cfg = config) {
   // requests before this finishes. Without a database this is already resolved.
   const ready = typeof store.init === 'function' ? store.init().then(() => booking.refreshMailer()) : Promise.resolve();
   // stock / paypal: the ones of the mode in use at start (kept for scripts and tests).
-  const out = { server, booking, store, payments, mailer, ready };
+  // `app` is the raw request handler, used by the serverless entry point (api/).
+  const out = { server, app, booking, store, payments, mailer, ready };
   Object.defineProperty(out, 'stock', { get: () => booking.stock, enumerable: true });
   Object.defineProperty(out, 'paypal', { get: () => booking.paypal, enumerable: true });
   return out;

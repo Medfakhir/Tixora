@@ -280,6 +280,32 @@ async function sendFile(req, res, filePath, opts = {}) {
   });
 }
 
+/**
+ * Send an in-memory file (used for tickets, which live in the database on hosts
+ * without a disk). Mirrors sendFile's download/inline behaviour.
+ */
+function sendBuffer(req, res, buffer, opts = {}) {
+  if (res.headersSent) {
+    try {
+      res.end();
+    } catch {}
+    return;
+  }
+  const headers = {
+    'Content-Type': opts.contentType || 'application/octet-stream',
+    'Content-Length': buffer.length,
+    'Cache-Control': opts.cacheControl || 'no-store',
+    ...(opts.headers || {}),
+  };
+  if (opts.downloadName) headers['Content-Disposition'] = contentDisposition(opts.downloadName, opts.inline ? 'inline' : 'attachment');
+  res.writeHead(opts.status || 200, headers);
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  res.end(buffer);
+}
+
 function errorPage(status, message) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${status}</title><style>body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f7f2ea;color:#2a2018;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
@@ -460,6 +486,7 @@ module.exports = {
   sendJson,
   sendHtml,
   sendFile,
+  sendBuffer,
   redirect,
   serializeCookie,
   appendHeader,
