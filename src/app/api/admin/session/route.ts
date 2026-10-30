@@ -21,11 +21,18 @@ export const POST = withApi(async (request: Request) => {
   const normalised = email.trim().toLowerCase()
 
   const admin = await prisma.adminUser.findUnique({ where: { email: normalised } })
-  const usable = admin && admin.isActive && (!admin.lockedUntil || admin.lockedUntil <= new Date())
 
-  // Unknown address, deactivated account and locked account all answer identically.
-  if (!admin || !usable) {
-    if (admin?.isActive) await registerFailure(admin, ip, userAgent)
+  // A locked account says so and, crucially, is NOT counted again — otherwise every
+  // retry while locked would push the unlock time further out and the account could
+  // never recover by itself. The lock is the only case where the reason is revealed;
+  // an unknown or deactivated account still answers identically below.
+  if (admin?.isActive && admin.lockedUntil && admin.lockedUntil > new Date()) {
+    const minutes = Math.max(1, Math.ceil((admin.lockedUntil.getTime() - Date.now()) / 60_000))
+    throw new ApiError(`Too many failed attempts. Try again in ${minutes} minute(s).`, 429, 'ACCOUNT_LOCKED')
+  }
+
+  // Unknown address and deactivated account answer identically (no enumeration).
+  if (!admin || !admin.isActive) {
     throw new ApiError('Invalid email or password.', 401, 'INVALID_CREDENTIALS')
   }
 
