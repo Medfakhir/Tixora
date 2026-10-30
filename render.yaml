@@ -1,0 +1,61 @@
+# Render Blueprint: creates the booking app on Render (render.com) in one go.
+# Render -> New -> Blueprint -> pick this repository -> fill in the values it asks for.
+#
+# What you get: one web service in Frankfurt (closest to Morocco) on the Starter instance
+# (512 MB, always on), with a 1 GB disk at /var/data for orders, settings and ticket files.
+# Render backs the disk up every 24 hours and keeps 7 days of copies.
+#
+# Secrets are never written in this file: Render asks for them when you create the
+# Blueprint. Add BASE_URL later in the service's Environment tab. PayPal is connected
+# on the dashboard's PayPal page once the app is running.
+services:
+  - type: web
+    name: bahia-booking
+    runtime: node
+    region: frankfurt
+    # No plan line: Render's default for a new web service is the Starter instance
+    # (0.5 CPU, 512 MB). The free instance can't have a disk or send email.
+    buildCommand: npm install --omit=dev --no-audit --no-fund
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    disk:
+      name: booking-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATA_DIR
+        value: /var/data/data
+      - key: TICKETS_DIR
+        value: /var/data/tickets
+      - key: PAYPAL_MODE
+        value: sandbox
+      - key: EMBED_ALLOWED_ORIGINS
+        value: https://bahiapalace.com https://www.bahiapalace.com
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      # Asked when you create the Blueprint:
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # Optional: store orders, settings, email and PayPal settings in Postgres
+      # (for example Neon). Leave blank to keep using the disk.
+      - key: DATABASE_URL
+        sync: false
+      # Set this if you use DATABASE_URL, so the saved SMTP password can be
+      # decrypted by every instance (same value on every instance).
+      - key: SESSION_SECRET
+        sync: false

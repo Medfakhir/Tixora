@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Dashboard – Bookings</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/FamiljenGrotesk.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form class="login-card" id="login-form">
+    <svg class="login-star" viewBox="-4 -4 108 108" aria-hidden="true"><path d="M50 .5 64.5 15H85v20.5L99.5 50 85 64.5V85H64.5L50 99.5 35.5 85H15V64.5L.5 50 15 35.5V15h20.5z"/></svg>
+    <h1>Booking dashboard</h1>
+    <label for="login-pw">Password</label>
+    <input id="login-pw" type="password" autocomplete="current-password" required>
+    <p class="form-err" id="login-err" role="alert"></p>
+    <button class="btn btn-primary btn-block" type="submit">Log in</button>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <nav class="side" aria-label="Dashboard">
+    <p class="side-brand" id="brand">Bookings</p>
+    <a href="#overview" data-nav="overview">Overview</a>
+    <a href="#orders" data-nav="orders">Orders</a>
+    <a href="#stock" data-nav="stock">Ticket stock</a>
+    <a href="#calendar" data-nav="calendar">Calendar</a>
+    <a href="#paypal" data-nav="paypal">PayPal</a>
+    <a href="#email" data-nav="email">Email (SMTP)</a>
+    <a href="#templates" data-nav="templates">Email templates</a>
+    <a href="#activity" data-nav="activity">Activity log</a>
+    <a href="#settings" data-nav="settings">Settings</a>
+    <div class="side-foot">
+      <a href="/" target="_blank" rel="noopener">Open booking page</a>
+      <button type="button" class="linklike" id="logout">Log out</button>
+    </div>
+  </nav>
+  <main class="main" id="main" tabindex="-1"></main>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="/admin/admin.js" defer></script>
+</body>
+</html>

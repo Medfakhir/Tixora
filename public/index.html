@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Book tickets – Bahia Palace</title>
+<meta name="description" content="Book your Bahia Palace entrance tickets online. Pick a date, pay securely with PayPal and receive your e-tickets by email straight away.">
+<meta name="theme-color" content="#0f5a4a">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/FamiljenGrotesk.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <h1 class="site-name" id="site-name">Bahia Palace Tickets</h1>
+        <p class="tagline" id="tagline"></p>
+      </div>
+      <p class="hours" id="hours"></p>
+    </div>
+  </header>
+
+  <p class="banner banner-test" id="testmode" hidden></p>
+  <p class="banner banner-notice" id="notice" hidden></p>
+
+  <main class="layout" id="booking">
+    <div class="flow">
+      <section class="step" id="step-date" aria-labelledby="h-date">
+        <h2 class="step-title" id="h-date"><span class="step-num" aria-hidden="true">1</span>Choose your visit date</h2>
+        <div class="calendar">
+          <div class="cal-head">
+            <button type="button" class="cal-nav" id="prev-month" aria-label="Previous month">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+            </button>
+            <p class="cal-month" id="cal-month" aria-live="polite"></p>
+            <button type="button" class="cal-nav" id="next-month" aria-label="Next month">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+          <div class="cal-weekdays" aria-hidden="true"><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span></div>
+          <div class="cal-grid" id="cal-grid" role="group" aria-label="Visit date"></div>
+          <p class="cal-error" id="cal-error" role="alert" hidden></p>
+          <ul class="cal-legend" aria-hidden="true">
+            <li><span class="key key-open"></span>Available</li>
+            <li><span class="key key-few"></span>Few left</li>
+            <li><span class="key key-off"></span>Closed or sold out</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="step" id="step-tickets" aria-labelledby="h-tickets">
+        <h2 class="step-title" id="h-tickets"><span class="step-num" aria-hidden="true">2</span>Choose tickets</h2>
+        <p class="hint" id="tickets-hint">Choose a date first to see which tickets are available.</p>
+        <ul class="tickets" id="ticket-list"></ul>
+        <p class="hint" id="max-hint" hidden></p>
+      </section>
+
+      <section class="step" id="step-details" aria-labelledby="h-details">
+        <h2 class="step-title" id="h-details"><span class="step-num" aria-hidden="true">3</span>Your details</h2>
+        <form class="details" id="details" novalidate autocomplete="on">
+          <div class="field">
+            <label for="f-name">Full name</label>
+            <input id="f-name" name="name" autocomplete="name" maxlength="100" required>
+            <p class="err" id="e-name"></p>
+          </div>
+          <div class="field">
+            <label for="f-email">Email</label>
+            <input id="f-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" required aria-describedby="help-email">
+            <p class="help" id="help-email">Your tickets will be sent to this address, so check it carefully.</p>
+            <p class="err" id="e-email"></p>
+          </div>
+          <div class="field">
+            <label for="f-phone">Phone <span class="opt">(optional)</span></label>
+            <input id="f-phone" name="phone" type="tel" autocomplete="tel" maxlength="40" aria-describedby="help-phone">
+            <p class="help" id="help-phone">Only used if we need to reach you about your booking.</p>
+          </div>
+          <div class="field" id="terms-row" hidden>
+            <label class="check"><input type="checkbox" id="f-terms"> <span>I accept the <a id="terms-link" href="#" target="_blank" rel="noopener">terms and conditions</a></span></label>
+            <p class="err" id="e-terms"></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="step" id="step-pay" aria-labelledby="h-pay">
+        <h2 class="step-title" id="h-pay"><span class="step-num" aria-hidden="true">4</span>Pay</h2>
+        <div class="inline-summary" id="inline-summary"></div>
+        <p class="hint pay-hint" id="pay-hint"></p>
+        <div class="pay-box">
+          <div id="paypal-buttons"></div>
+          <button type="button" class="btn btn-primary btn-block" id="mock-pay" hidden>Complete test payment</button>
+          <p class="pay-msg" id="pay-msg" role="alert" hidden></p>
+          <div class="pay-unconfirmed" id="pay-unconfirmed" role="alert" hidden>
+            <p id="pay-unconfirmed-text"></p>
+            <button type="button" class="btn btn-secondary" id="pay-check">Check payment status</button>
+          </div>
+        </div>
+        <p class="fineprint">Payment is handled securely by PayPal. You can pay with a PayPal account or with a debit or credit card.</p>
+      </section>
+    </div>
+
+    <aside class="summary" id="summary" aria-labelledby="h-summary">
+      <h2 class="summary-title" id="h-summary">Your visit</h2>
+      <p class="summary-date" id="sum-date">Pick a date to begin.</p>
+      <ul class="summary-lines" id="sum-lines"></ul>
+      <div class="summary-total"><span>Total</span><strong id="sum-total"></strong></div>
+      <p class="summary-email" id="sum-email" hidden></p>
+      <ul class="assurances">
+        <li>Your tickets arrive by email right after payment</li>
+        <li>Secure payment with PayPal or card</li>
+      </ul>
+    </aside>
+  </main>
+
+  <section class="done" id="done" hidden tabindex="-1" aria-live="polite"></section>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<div class="mobilebar" id="mobilebar">
+  <div class="mobilebar-text"><strong id="mb-total"></strong><span id="mb-count"></span></div>
+  <button type="button" class="btn btn-primary" id="mb-next">Choose a date</button>
+</div>
+
+<div class="processing" id="processing" hidden>
+  <div class="processing-card" role="status">
+    <svg class="spin-star" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 .5 64.5 15H85v20.5L99.5 50 85 64.5V85H64.5L50 99.5 35.5 85H15V64.5L.5 50 15 35.5V15h20.5z"/></svg>
+    <p>Confirming your payment…</p>
+  </div>
+</div>
+
+<noscript><p class="banner banner-notice">Please turn on JavaScript to book tickets.</p></noscript>
+<script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,416 +1,255 @@
-# Badi Palace Museum — online entrance tickets
+# Bahia Palace booking app
 
-Booking site for **book.visitbadipalace.com**: visitors choose a visit date, buy adult and
-child entrance tickets, pay with PayPal, and receive a confirmation email with a QR code.
-Staff scan that QR code at the gate. Administrators manage prices, daily capacity, closures,
-orders and check-ins from a private dashboard.
+Sell entrance tickets online. Customers pick a date and tickets and pay with PayPal (or a card through PayPal). The app then **emails the ticket files from your stock folder automatically**, within seconds.
 
-> **Not the official ticket office unless authorised.** The site is an independent booking
-> platform. The public pages show a disclaimer until an administrator enables
-> **Museum settings → Authorised official ticket office**. Only enable it if the museum has
-> authorised this site in writing.
+- Booking page with a date calendar (closed days, sold-out days, same-day cut-off)
+- PayPal checkout: PayPal account, debit or credit card
+- Automatic delivery: each sale takes the next ticket files from `tickets/stock/`, attaches them to the email and moves them to `tickets/sold/`
+- Dashboard at `/admin`: sales, orders, resend tickets, ticket stock and uploads, closing days, prices and texts
+- Email settings, editable email templates and an activity log, all in the dashboard
+- Runs on any host with **Node.js 18 or newer**. It has no npm packages, so there is nothing to install
+- **Files by default, database optional.** Everything is kept in simple files: orders in `data/orders/`, settings in `data/settings.json`, mail settings and templates in `data/mail.json`, the activity log in `data/activity.json`, and your tickets as individual files under `tickets/`. Back up the `data/` and `tickets/` folders and you have everything. If you set `DATABASE_URL` (for example a Neon Postgres database), orders, settings, email/SMTP settings, PayPal keys, the activity log and the sold-ticket fingerprints are stored there instead — see [section 8](#8-optional-neon-postgres-database)
 
-## What is included
+---
 
-- **Booking** — date calendar with past dates, same-day cutoff, admin closures, weekly
-  closures, booking window, sold-out days and optional daily capacity. Adult/child
-  quantities with a live total, then full name, email and international phone number.
-- **Server-side truth** — the server re-reads prices, capacity and closures, recalculates the
-  total from the database, and re-checks availability before creating the order. The browser
-  never supplies the amount that is charged.
-- **PayPal** — Smart Buttons for the browser, Orders v2 create/capture on the server, and a
-  verified webhook for payment and refund events. An order becomes `PAID` only after the
-  server captures the payment (or verifies a PayPal webhook).
-- **Email + QR** — confirmation email with visit date, ticket counts, total, order number and
-  a QR code containing the order's random public ID. Resend is the preferred provider; SMTP
-  is the fallback. A failed email never cancels a paid booking — it can be retried.
-- **Gate check-in** — camera QR scanner or manual booking-reference entry, with an
-  idempotent check-in (a second scan reports the original check-in instead of duplicating it).
-- **Admin dashboard** — revenue for today / this week / this month / all time, paid order and
-  ticket counts, 30-day revenue chart, recent bookings, monthly sales calendar, searchable
-  orders table with museum filters, CSV export, closures and museum settings.
-- **Languages** — English, French and Spanish, switchable from the header. The dictionaries
-  live in `src/lib/i18n/messages.ts`; adding another language is one dictionary entry plus a
-  locale in `LOCALES`.
-- **Timezone** — business days, cutoffs and reports use `Africa/Casablanca` by default. All
-  timestamps are stored in UTC and converted for display.
+## 1. Try it on your computer (5 minutes, no PayPal needed)
 
-## Stack
-
-- Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, shadcn/base-ui primitives
-- Prisma 6 with **PostgreSQL**
-- PayPal Orders v2 REST API + Smart Buttons (`@paypal/react-paypal-js`)
-- Resend or SMTP/Nodemailer
-- Recharts, Zod, React Hook Form, QRCode, html5-qrcode
-- Vitest
-
-The original ticket-PDF catalogue, inventory, refunds and legacy admin screens remain in the
-codebase. They are not part of the museum booking flow, but were kept so existing data and
-payment plumbing keep working.
-
-## Requirements
-
-- Node.js 20.9+ (developed on Node 24)
-- PostgreSQL 14+ (local, Supabase, Neon, Railway, RDS…)
-- npm 10+
-- `psql` only if you want `npm run setup:db` to create databases automatically
-
-## 1. Create the databases
-
-### Local PostgreSQL
-
-```bash
-createdb kibir
-createdb kibir_test
-```
-
-Or, as a PostgreSQL administrator:
-
-```sql
-CREATE DATABASE kibir;
-CREATE DATABASE kibir_test;
-CREATE USER kibir WITH PASSWORD 'a-long-random-password';
-GRANT ALL PRIVILEGES ON DATABASE kibir TO kibir;
-GRANT ALL PRIVILEGES ON DATABASE kibir_test TO kibir;
-```
-
-`kibir_test` is used only by the test suite, which truncates it between tests. Never point
-`DATABASE_URL_TEST` at real data.
-
-### Supabase / hosted PostgreSQL
-
-Create a project and copy the connection string. Use the **direct** connection (or session
-pooler) for `DATABASE_URL` so `prisma migrate deploy` works. If you must use a transaction
-pooler, run migrations with the direct URL and add
-`?pgbouncer=true&connection_limit=1` to the runtime URL for serverless hosting.
-
-## 2. Configure the environment
-
-```bash
-cp .env.example .env
-openssl rand -base64 48   # AUTH_SECRET (or NEXTAUTH_SECRET)
-openssl rand -hex 32      # SMTP_ENCRYPTION_KEY
-openssl rand -hex 24      # CRON_SECRET
-```
-
-Required values:
-
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL runtime connection (pooled URL on serverless hosts) |
-| `DATABASE_URL_TEST` | Disposable test database; name must contain `test` |
-| `DIRECT_URL` | Migrations only; direct/unpooled URL (same as `DATABASE_URL` locally) |
-| `APP_URL` | Public origin, e.g. `https://book.visitbadipalace.com` |
-| `AUTH_SECRET` (or `NEXTAUTH_SECRET`) | Admin session/token signing |
-| `SMTP_ENCRYPTION_KEY` | 64 hex chars; encrypts PayPal/SMTP secrets stored in the DB |
-| `CRON_SECRET` | Bearer token for the maintenance endpoint |
-| `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | First admin, read once by the seed |
-
-Museum defaults (prices, currency, timezone, capacity, cutoff, booking window) are stored in
-the database and seeded by `npm run db:seed`. Change them later in
-**Admin → Museum settings**; they apply to the next booking immediately. Existing orders keep
-the amount that was charged.
-
-## 3. Install, migrate, seed, run
-
-```bash
-npm install
-npx prisma generate
-npm run db:deploy        # apply migrations (`prisma migrate deploy`)
-npm run db:seed          # settings + museum defaults + first administrator
-npm run dev
-```
-
-`npm run setup:db` creates both databases (when `POSTGRES_ADMIN_URL` is set) and applies
-migrations to development and test. `npm run db:migrate` creates a new migration while
-developing locally; `npm run db:push` is only for throwaway databases.
-
-Sign in at <http://localhost:3000/admin/login>. There are no default production credentials:
-the seed refuses to create an administrator unless a valid email and a password of at least
-12 characters are supplied, and it never overwrites an existing account.
-
-Optional demo data:
-
-```bash
-SEED_DEMO=1 npm run db:seed
-```
-
-This creates three clearly marked sample bookings on an empty museum database so the
-dashboard, sales calendar and check-in screen can be tested before PayPal is connected.
-They are never created in production by default.
-
-## 4. PayPal sandbox
-
-1. Open <https://developer.paypal.com/dashboard/applications/sandbox> and create an app.
-2. Copy the **Client ID** and **Secret**.
-3. Either put them in `.env`:
-   ```bash
-   PAYPAL_MODE=sandbox
-   PAYPAL_CLIENT_ID=...
-   PAYPAL_CLIENT_SECRET=...
+1. Install **Node.js** (the "LTS" version) from <https://nodejs.org>.
+2. Open Terminal, go to this folder and start the demo:
    ```
-   or save them in **Admin → Settings → PayPal** (stored encrypted). Database values take
-   precedence; environment values work even if the database toggle is off.
-4. Register a webhook pointing at `https://YOUR_DOMAIN/api/paypal/webhook` and subscribe to:
-   - `CHECKOUT.ORDER.APPROVED`
-   - `PAYMENT.CAPTURE.COMPLETED`
-   - `PAYMENT.CAPTURE.REFUNDED`
-   - `PAYMENT.CAPTURE.DENIED`
-   - `PAYMENT.CAPTURE.REVERSED`
-5. Copy the webhook ID into **Settings → PayPal** or `PAYPAL_WEBHOOK_ID` (or the explicit
-   `PAYPAL_WEBHOOK_ID_SANDBOX` / `PAYPAL_WEBHOOK_ID_LIVE`).
-6. Use a PayPal sandbox **personal** buyer account at checkout. No real money moves.
+   cd ~/"Booking Flow"
+   npm run demo
+   ```
+3. Open <http://localhost:8080>. Book a few tickets with the **Complete test payment** button.
+4. Open <http://localhost:8080/admin> (password `demo1234`) to see the orders and stock.
 
-The return page is not proof of payment. The browser only tells the server *which* PayPal
-order to capture; the server re-reads the capture from PayPal, checks amount, currency and
-ownership, and only then flips the order to `PAID`.
+**Another port:** to use a different port, start the demo with `PORT=9000 npm run demo` (any number from 1025 to 65535) and open `http://localhost:9000`. If the port is already used by another program, the demo moves to the next free port and prints the address to open in Terminal.
 
-### Demo payments (test checkout without PayPal)
+The demo uses sample tickets marked "not valid" and its own `demo/` folder, so it never touches your real tickets. Ticket emails are saved as files in `demo/data/outbox/`; open the `.html` file to see what customers receive. Stop the demo with `Ctrl + C`.
 
-Before a sandbox app exists you can still exercise the full checkout → confirmation-email
-flow. Set:
+---
 
-```bash
-DEMO_PAYMENTS=true
-```
-
-The checkout then shows a **“Simulate payment (test mode)”** button (and a test-mode banner).
-Pressing it calls `POST /api/demo/complete-payment`, which reuses the same `markOrderPaid`
-logic as a real capture — the order becomes `PAID`, the confirmation email with the QR code is
-queued and sent, and the success page renders exactly as after a real payment. No money moves.
-
-Guardrails:
-
-- The button and the endpoint are only available when `DEMO_PAYMENTS=true`; otherwise the route
-  answers `404`.
-- Amounts and currency always come from the stored order, never the request.
-- Demo captures use synthetic `DEMO-<order.id>` identifiers, so demo payments are easy to spot
-  (and delete) in the admin.
-- **Never** enable it on a deployment that sells real tickets.
-
-## 5. Email and QR codes
-
-Resend is used when `RESEND_API_KEY` is set:
-
-```bash
-RESEND_API_KEY=re_...
-RESEND_FROM="Badi Palace Museum <tickets@visitbadipalace.com>"
-```
-
-Verify the sending domain in Resend first. Without Resend, configure SMTP in
-**Admin → Settings → SMTP** and use **Verify** / **Send test email**. The confirmation email
-attaches the QR code as a PNG and includes a link to `/order/<publicId>` where the same QR
-code is displayed.
-
-A paid order stays paid even when delivery fails. The email is queued and retried; failures
-are visible in **Admin → Email logs** and can be retried from the order page.
-
-### Free test inbox (Ethereal / Mailtrap)
-
-To see real confirmation emails without a domain or a paid plan, use a capture inbox:
-
-1. Open <https://ethereal.email/> and click **Create Ethereal Account**. It shows a host,
-   port, username and password (no signup required). Mailtrap (<https://mailtrap.io>) works
-   the same way if you already have it.
-2. Sign in to **/admin** and open **Settings → SMTP**. Fill in:
-   - **Host** `smtp.ethereal.email` (Mailtrap shows its own host)
-   - **Port** `587`, **Encryption** `STARTTLS`
-   - **Username** and **Password** as Ethereal provided
-   - **Sender email** — any address, e.g. `tickets@visitbadipalace.com`
-   - enable **SMTP delivery**
-3. Click **Verify** (expect “Connected to …”), then **Send test email**.
-4. Open <https://ethereal.email/messages> (or the Mailtrap inbox) to read it, including the
-   QR attachment.
-
-Resend is only used when `RESEND_API_KEY` is set; SMTP is the fallback, so leave
-`RESEND_API_KEY` unset when testing with Ethereal.
-
-The confirmation is sent **immediately** after a capture. If that send fails it stays queued and
-is retried by the admin **Retry delivery** action on the order page and by
-`POST/GET /api/cron/expire-reservations`. To test the email without PayPal, seed the demo
-bookings (`SEED_DEMO=1 npm run db:seed` — they are already `PAID`) and press **Retry delivery**
-on one of them in **/admin/orders**.
-
-## 6. Admin tour
-
-| Page | What it does |
-| --- | --- |
-| `/admin` | Revenue today/week/month/all time, order and ticket counts, check-in progress, 30-day chart, upcoming visits, recent bookings |
-| `/admin/sales-calendar` | Month by visit date: revenue, ticket counts, checked-in counts, closures, remaining capacity; click a day for its orders |
-| `/admin/check-in` | Camera QR scanner or manual reference entry, with “accept any visit date” escape hatch |
-| `/admin/closed-dates` | Close a single date or an inclusive range; enable recurring weekly closures |
-| `/admin/orders` | Search and filter by status, environment, order type and visit date; open an order for details |
-| `/admin/orders/[id]` | Museum ticket breakdown, payment IDs, check-in state and email delivery attempts |
-| `/admin/settings/museum` | Museum name, contact, timezone, currency, adult/child prices, daily capacity, cutoff, booking window, per-order limits, official-partner disclaimer |
-| `/admin/settings/paypal` | Sandbox/live credentials and webhook ID |
-| `/admin/settings/smtp` | SMTP credentials and test tools |
-| `/admin/activity-logs` | Audited admin actions, including settings changes, closures, exports and check-ins |
-
-The orders CSV is exported from **Orders → Export** or from the sales calendar. It includes
-museum visit date, adult/child counts, check-in data and PayPal identifiers, and neutralises
-spreadsheet formula injection.
-
-## 7. End-to-end test checklist
-
-Run these against a staging deployment with sandbox PayPal and a test email inbox.
-
-1. **Seed and sign in** — `npm run db:seed`; sign in at `/admin/login`; confirm the dashboard
-   loads with zero or demo data.
-2. **Calendar rules**
-   - Past dates are disabled.
-   - Today is disabled after the configured cutoff in `Africa/Casablanca`.
-   - Close tomorrow in **Closures**; it disappears from the public calendar.
-   - Enable a weekly closure; every matching weekday disappears.
-   - Set a small capacity (e.g. 3), buy 2 tickets, then confirm only 1 remains; try to buy 2
-     more and confirm the client and server both refuse.
-3. **Quantities and validation** — try 0 tickets, >20 adults, >20 children, invalid email,
-   short phone, missing name. Confirm inline errors and that the total updates live.
-4. **Server recalculation** — with the booking form open, change a price in museum settings,
-   then submit. The order total must use the new database price.
-5. **Payment**
-   - Create an order, approve it with a PayPal sandbox buyer.
-   - Confirm the order is `AWAITING_PAYMENT` before approval and `PAID` only after capture.
-   - Confirm the success page shows order number, visit date, adult/child counts, total and
-     QR code.
-   - Reload the success page / replay the callback; it must remain paid without a second
-     capture.
-6. **Email** — confirm the confirmation email arrives with the QR attachment; open the
-   `/order/<publicId>` link and compare the QR payload.
-7. **Check-in** — scan the QR in `/admin/check-in`; confirm the party details. Scan again:
-   the result must say “Already checked in”, not create a duplicate. Try a booking for
-   another date: it must be refused unless “accept any visit date” is enabled. Try an unpaid
-   order: it must be refused.
-8. **Refunds** — refund a sandbox capture from the admin order page (or the PayPal dashboard).
-   Confirm the webhook records `PAYMENT.CAPTURE.REVERSED` and the order reflects the refund.
-9. **Reports** — confirm today/week/month/all-time revenue and ticket counts match the paid
-   orders. Check the 30-day chart, monthly calendar and CSV totals.
-10. **Languages** — switch EN / FR / ES from the header; the booking flow, summary and
-    disclaimer should translate. Customer emails follow the booking locale.
-11. **Rate limiting** — submit the checkout or availability endpoint repeatedly; excess
-    requests should receive a throttled response rather than creating orders.
-
-## 8. Maintenance endpoint
-
-`POST /api/cron/expire-reservations` releases expired legacy ticket holds, drains the email
-queue with backoff and prunes stale rate-limit buckets. It requires the `CRON_SECRET` as a
-bearer header — never in the query string:
-
-```bash
-curl -X POST https://YOUR_DOMAIN/api/cron/expire-reservations \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
-
-Run it every minute from Vercel Cron (Pro), Railway, crontab or a systemd timer. It is required
-for email retries; the museum flow has no time-limited inventory holds. On Vercel Hobby the
-bundled `vercel.json` schedules it once a day, and confirmation emails are sent immediately on
-capture, so the daily run only catches failed retries. `GET` and `POST` are both accepted
-(Vercel Cron uses `GET`).
-
-## 9. Tests and quality checks
-
-```bash
-npm run test:unit   # no database: money, crypto, templates, upload sniffing, ids
-npm test            # integration: requires DATABASE_URL_TEST (truncates it)
-npm run typecheck
-npm run lint
-npm run build       # production build
-```
-
-The integration suite runs against real PostgreSQL. The setup refuses to run unless the test
-database name contains `test`.
-
-## 10. Deployment
-
-- Run `npx prisma migrate deploy` before starting a new build. Never `db push` in production.
-- Set `NODE_ENV=production`, a real HTTPS `APP_URL`, and a strong `AUTH_SECRET`.
-- PayPal redirect URLs and email links are built from `APP_URL`; a wrong value sends buyers
-  to the wrong host.
-- Keep `SMTP_ENCRYPTION_KEY` stable and back it up with the database. Without it, PayPal and
-  SMTP secrets saved in the database cannot be decrypted (the app falls back to environment
-  values, if any).
-- Back up the PostgreSQL database. If the legacy PDF catalogue is used, also back up
-  `STORAGE_LOCAL_DIR` or the S3 bucket.
-- The museum has no background worker requirement beyond the maintenance endpoint; email
-  retries run when it is called.
-- Set `APP_URL=https://book.visitbadipalace.com` and register the production PayPal webhook
-  before enabling live credentials.
-
-### Free deployment: Vercel Hobby + Neon Postgres
-
-Enough to run and test the whole flow, including sandbox payments:
-
-1. **Database** — create a free [Neon](https://neon.tech) project and copy both connection
-   strings. Neon labels one **pooled** (hostname contains `-pooler`) and one **direct**.
-   - `DATABASE_URL` = pooled string, plus `?sslmode=require`
-   - `DIRECT_URL` = direct string, plus `?sslmode=require`
-   Supabase works the same way: pooled URL (port 6543, add `?pgbouncer=true&connection_limit=1`)
-   for runtime, `db.<ref>.supabase.co:5432` for `DIRECT_URL`.
-2. **Repository** — push this project to its own GitHub repository. The repository root must
-   contain `package.json`, `prisma/` and `vercel.json`; if it lives in a subfolder, set the
-   Vercel **Root Directory** to that folder. (Do not deploy the whole `Desktop` repo.)
-3. **Import** the repository at <https://vercel.com/new>. Vercel detects Next.js and runs the
-   `vercel-build` script (`prisma migrate deploy && next build`); `npm install` runs
-   `prisma generate` automatically via the `postinstall` script.
-4. **Environment variables** (Project → Settings → Environment Variables, Production + Preview):
-
-   | Variable | Value |
-   | --- | --- |
-   | `DATABASE_URL` | Neon **pooled** URL (`...-pooler...?sslmode=require`) |
-   | `DIRECT_URL` | Neon **direct** URL (`...?sslmode=require`) |
-   | `APP_URL` | `https://<your-project>.vercel.app` (or the custom domain) |
-   | `AUTH_SECRET` | `openssl rand -base64 48` |
-   | `SMTP_ENCRYPTION_KEY` | `openssl rand -hex 32` |
-   | `CRON_SECRET` | `openssl rand -hex 24` (also authorises the daily Vercel Cron) |
-   | `INITIAL_ADMIN_EMAIL` | your admin email |
-   | `INITIAL_ADMIN_NAME` | your name |
-   | `INITIAL_ADMIN_PASSWORD` | at least 12 characters |
-   | `PAYPAL_MODE` | `sandbox` |
-   | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | from the PayPal sandbox app (optional — can also be saved in the admin UI) |
-   | `DEMO_PAYMENTS` | `true` to test checkout without PayPal (optional — **omit** on a live store) |
-
-   Do **not** set `DATABASE_URL_TEST` in production, and do not set `RESEND_API_KEY` when
-   testing with Ethereal SMTP.
-5. **First admin** — after the first successful deploy, run the seed once locally against the
-   Neon database (`DATABASE_URL=... DIRECT_URL=... npm run db:seed`) or from a Vercel CLI shell
-   (`vercel env pull .env.production && npm run db:seed`). Then sign in at `/admin/login`.
-6. **PayPal webhook** — in the PayPal sandbox app, add
-   `https://<your-project>.vercel.app/api/paypal/webhook` and subscribe to the events listed in
-   section 4, then save the webhook ID in **Settings → PayPal**.
-7. **Cron** — `vercel.json` schedules `/api/cron/expire-reservations` once a day (the Hobby
-   limit; the route accepts both `GET` and `POST`). Confirmation emails are sent immediately on
-   capture, so the daily run only picks up failed retries. On Pro, change the schedule to
-   `*/5 * * * *`.
-
-Free-tier notes: Vercel Hobby is for non-commercial use — upgrade to Pro before taking real
-payments. Neon's free branch scales to zero and wakes on the first request, so the very first
-page load may be slow. Vercel's serverless filesystem is read-only: with `STORAGE_PROVIDER=LOCAL`
-the legacy PDF files will not persist, but museum bookings do not use them.
-
-## Project layout
+## 2. How the ticket stock works
 
 ```
-prisma/schema.prisma          data model (PostgreSQL, museum + legacy catalogue)
-prisma/migrations/            migration history
-scripts/seed.mjs              settings, museum defaults, first admin, optional demo
-scripts/setup-dev-db.mjs      create/migrate development + test databases
-src/app/(store)/              public museum site, booking, success, order status, legal
-src/app/admin/                admin dashboard, orders, calendar, check-in, settings
-src/app/api/museum/           public availability + checkout endpoints
-src/app/api/admin/            closures, check-in, museum settings, exports
-src/lib/museum/               settings, dates, availability, pricing, orders, reports
-src/lib/orders/               checkout, PayPal capture, webhook application
-src/lib/email/                templates, Resend/SMTP transport, queued delivery
-src/lib/i18n/                 EN/FR/ES dictionaries and locale switching
-src/components/museum/        calendar, booking widget, PayPal buttons
-vercel.json                   Vercel build/cron config (Hobby-compatible)
+tickets/
+  stock/
+    adult/                 ← adult tickets valid on any day
+      ticket-0001.pdf
+      ticket-0002.pdf
+    adult/2026-12-24/      ← adult tickets valid only on 24 Dec 2026 (optional)
+    child/                 ← child tickets
+  reserved/                ← held while a customer is paying (automatic)
+  sold/BP-7K3QX9MZ/        ← tickets sent with order BP-7K3QX9MZ (automatic)
+  removed/                 ← duplicates and files you removed (automatic)
 ```
 
-## Known limitations
+- **One file = one ticket.** PDF, PNG, JPG, GIF, WEBP or Apple Wallet `.pkpass`.
+- The folder name is the ticket type's "Stock folder" in **Settings**. Add a type in Settings and its folder is created for you.
+- Files go out in name order. Date-specific tickets are used first for that date, then the any-day ones.
+- Add tickets in the dashboard (**Ticket stock** → drop the files), or copy them into the folder by FTP or File Manager.
+- **The same ticket is never sold twice.** The app remembers a fingerprint of every file it sold. A file uploaded twice is refused, and a copy of a sold ticket found in stock is moved to `removed/duplicates/`.
+- While a customer is in the PayPal window, their tickets are held for 15 minutes (you can change this in Settings). If they don't pay, the tickets go back to stock.
+- You get an email when stock runs low (Settings → "Warn me when stock falls to").
+- **Test payments use a separate folder.** While test payments (PayPal Sandbox) are on, tickets come from `tickets-sandbox/` instead of `tickets/`. Anyone can open a free PayPal test account, so test payments must never receive your real tickets. On the dashboard's **Ticket stock** page, switch between **Real tickets** and **Test tickets**: uploads go to the folder you have chosen, and the folder in use is marked. Put a few sample tickets in the test folder (or run `npm run sample-tickets` while test payments are on).
 
-- Refunds are issued through PayPal per capture; PayPal fees are not modelled in reports.
-- The legacy ticket-PDF catalogue and its reservation flow remain, but museum bookings do not
-  allocate PDF inventory.
-- Email delivery requires Resend or SMTP. Booking works without it, but visitors will not
-  receive their QR code until a provider is configured.
-- The site is not the museum's official ticket office unless the official-partner setting is
-  enabled and the operator is authorised.
+---
+
+## 3. Go live: checklist
+
+### a) Hosting
+
+The app needs a host that runs Node.js, keeps files between restarts and can send email. Put it on a subdomain such as `book.bahiapalace.com`, with HTTPS switched on. (Vercel, where many websites live, can't run it: it doesn't keep files.)
+
+**Render (recommended, about $7.25 a month):** Render runs the app, keeps the server secure and up to date, provides HTTPS and backs up your orders and tickets every day (7 days of copies). The included `render.yaml` sets everything up.
+1. Put this folder in a **private GitHub repository**. Leave out `.env`, `data/`, `demo/` and the files in `tickets/`. The included `.gitignore` does this if you use git.
+2. Collect what Render will ask for: a dashboard password, your email, and your Gmail address and app password (step d). PayPal is connected later, in the dashboard (step c).
+3. Sign up at <https://render.com> with your GitHub account. Choose **New → Blueprint**, pick the repository, fill in the values and click **Deploy Blueprint**. Render creates the app in Frankfurt with a 1 GB disk, on the Starter instance ($7 a month plus $0.25 for the disk). The free instance can't keep files or send email.
+4. When the deploy shows **Live**, open the address Render shows (like `https://bahia-booking.onrender.com`) and add `/admin` to check the dashboard.
+5. **Your own address:** in the service, open **Settings → Custom Domains** and add `book.bahiapalace.com`. At Namecheap (Domain List → bahiapalace.com → Manage → Advanced DNS) add a **CNAME Record** with host `book` and the value Render shows (like `bahia-booking.onrender.com`). Render switches on HTTPS by itself, usually within minutes.
+6. In the service's **Environment** tab add `BASE_URL` = `https://book.bahiapalace.com` and save. The app restarts with the new address.
+
+On Render the settings from step b live in the **Environment** tab instead of a `.env` file. Every change you push to GitHub is deployed automatically. A deploy takes the app offline for a few seconds; a payment approved in those seconds is finished automatically when the app is back. Server messages are in the **Logs** tab.
+
+**cPanel hosting with "Setup Node.js App"** (most shared hosts):
+1. cPanel → **Domains**: create `book.bahiapalace.com`.
+2. Upload this folder (zipped) to your home folder, e.g. `/home/USER/booking`. Don't put it inside `public_html`.
+3. cPanel → **Setup Node.js App** → Create application: newest Node.js version, mode *Production*, application root `booking`, URL `book.bahiapalace.com`, startup file `server.js`.
+4. Create the `.env` file (step b) in the `booking` folder. You don't need to run "NPM install".
+5. Press **Restart**. Turn on SSL for the subdomain (AutoSSL / Let's Encrypt).
+6. cPanel → **Cron Jobs**: add a job that runs every 5 minutes:
+   `curl -fsS https://book.bahiapalace.com/healthz > /dev/null`
+   cPanel puts apps to sleep when nobody visits. This ping wakes the app regularly so it keeps finishing slow payments, retrying emails and returning unpaid tickets to stock.
+
+**Hostinger (Business or Cloud plan) "Node.js Web App"**: add a new website → Node.js Web App → upload the zip, entry file `server.js` → import your `.env` under Environment variables. Hostinger replaces the app's files on every deploy, so set `DATA_DIR` and `TICKETS_DIR` to a folder **outside** the app. Hostinger support can confirm the right path for your plan.
+
+**A small VPS** (Hetzner, DigitalOcean, Contabo…): install Node.js 22, copy the folder to `/opt/booking`, run it as a service and put Caddy in front for automatic HTTPS:
+```
+# /etc/systemd/system/booking.service
+[Service]
+WorkingDirectory=/opt/booking
+ExecStart=/usr/bin/node server.js
+Restart=always
+User=booking
+[Install]
+WantedBy=multi-user.target
+
+# /etc/caddy/Caddyfile
+book.bahiapalace.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+### b) Settings file (`.env`)
+
+Copy `.env.example` to `.env` and fill it in. At least:
+- `BASE_URL`: the public address, e.g. `https://book.bahiapalace.com`
+- `ADMIN_PASSWORD`: a long password for the dashboard
+- `ADMIN_EMAIL`: where sale notifications and alerts go
+- Email settings (below). PayPal is connected in the dashboard (step c)
+
+Never share `.env` and never upload it anywhere public.
+
+### c) PayPal
+
+You need a **PayPal Business** account (a personal account can be upgraded for free). Everything else happens on the dashboard's **PayPal** page.
+1. Go to <https://developer.paypal.com>, log in with your PayPal account and open **Apps & Credentials**. On the **Sandbox** tab, create an app (type Merchant).
+2. In the dashboard, open **PayPal**. Under *Test account (Sandbox)*, paste the app's **Client ID** and **Secret** and click **Connect Sandbox keys**. The app checks the keys with PayPal and sets up the webhook (payment updates for buyers who close the page right after paying, delayed payments and refunds) by itself.
+3. Add a few sample tickets to the test folder (dashboard → Ticket stock, while test payments are on). Buy a ticket using a Sandbox **personal** account (developer site → Testing Tools → Sandbox Accounts) and check that the email arrives.
+4. When everything works, open the **Live** tab of the same app on developer.paypal.com, paste its Client ID and Secret under *Live account*, and click **Switch to live payments**. From then on the real `tickets/` folder is used. Test orders stay in the order list marked "Test", keep their test tickets, and are not counted in your sales.
+
+The webhook can only be set up while the app runs at its public https address (`BASE_URL`). If you add the address later, click **Check connection** on the PayPal page. You can't leave live payments while a live customer is paying or waiting for tickets.
+
+The keys you connect are saved in `data/paypal.json`, which only the app can read; the secret is never shown again. Back it up with the rest of `data/` and never share it. Keys can also be set in `.env` instead (`PAYPAL_MODE`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, plus `PAYPAL_WEBHOOK_ID` for a webhook you create by hand pointing to `https://book.bahiapalace.com/api/paypal/webhook`). Keys connected on the PayPal page take priority.
+
+Currency: PayPal does not support the Moroccan dirham, so prices are in **EUR** by default (change it in Settings). In your PayPal account, allow payments in a currency you don't hold ("accept and convert"). Otherwise PayPal may hold each payment until you accept it by hand. The app keeps those tickets reserved and sends them when PayPal releases the money.
+
+### d) Email
+
+Customers receive their tickets as email attachments, so this must work.
+
+Set the mail server either in the dashboard (**Email (SMTP)**) or in `.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`). What you save in the dashboard wins; leave the SMTP host empty there to keep using `.env`.
+
+- **Gmail**: turn on 2-Step Verification, create an **App Password** at <https://myaccount.google.com/apppasswords>, then set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER` = your Gmail address, `SMTP_PASS` = the app password, and put the same Gmail address in `MAIL_FROM`. Gmail allows about 500 emails a day.
+- **A mailbox on your own domain** (e.g. `tickets@bahiapalace.com` at your host) looks more professional and lands in spam less often. Use your host's SMTP details (usually port 465 with SSL).
+- **Brevo, SendGrid, Mailgun, Resend**: create an SMTP key in their dashboard and use it as the password (port 587 with STARTTLS, or 465 with SSL). On free plans you usually have to verify the sender address first.
+
+Then open **Email (SMTP)** in the dashboard, click **Test connection**, and use **Send test email**. The password is stored encrypted in `data/mail.json` (it never appears on screen again). If no SMTP host is set at all, emails are saved in `data/outbox/` so you can still preview them.
+
+### e) Tickets, prices and texts
+
+In the dashboard:
+- **Settings**: ticket types and prices, how far ahead to sell, same-day cut-off, opening hours, the instructions printed in the email, support email, and a link to your terms and refund policy (PayPal expects buyers to be able to find these).
+- **Calendar**: tick weekly closing days, or click any date to close it.
+- **Ticket stock**: upload your ticket files.
+
+### f) Add it to your website
+
+**Option 1, a button (simplest):** point your "Buy tickets" buttons to `https://book.bahiapalace.com`. On bahiapalace.com that means the **Get Your Tickets** buttons on the Tickets page; in Elementor (WordPress) add a Button with that link.
+
+**Option 2, the booking form inside your page:** add this where the form should appear:
+```html
+<div id="bahia-booking"></div>
+<script src="https://book.bahiapalace.com/embed.js" data-target="bahia-booking" data-offset="90" async></script>
+```
+In Elementor, put it in an **HTML** widget. In a Next.js site (like bahiapalace.com), put the `<div>` in the page and load the script with `<Script src="https://book.bahiapalace.com/embed.js" data-target="bahia-booking" data-offset="90" />` from `next/script`.
+
+`data-offset` is the height of your sticky menu in pixels. Put your site's address in `EMBED_ALLOWED_ORIGINS` (already set to bahiapalace.com in `render.yaml` and `.env.example`). The form resizes itself and works with PayPal inside the page.
+
+To open the form with a date already picked, link to `https://book.bahiapalace.com/?date=2026-12-24`.
+
+---
+
+## 4. Day to day
+
+- **Overview**: today's and this month's sales, a 30-day chart, visits coming up, stock levels, and alerts (anything that needs you shows here in red).
+- **Orders**: search by name, email, order number or PayPal ID. Open an order to resend the tickets (to the same or another address), copy the customer's download link, add a note or retry delivery. Export to CSV for your accountant.
+- **Refunds**: refund in your PayPal account. With the webhook set up, the order is marked refunded automatically. Without it, click **Mark as refunded**. Tickets already emailed can't be taken back, so refund only tickets the customer hasn't used.
+- **Needs attention**: a customer paid but there was no ticket left, for example because the stock folder was empty. Add tickets to stock and delivery is retried automatically within minutes, or click **Retry delivery**.
+- **Email (SMTP)**: the mail server, sender address, and buttons to test the connection and send a test email.
+- **Email templates**: change the subject, heading, introduction and footer of the four emails (ticket email, new-sale alert, problem alert and test email). Placeholders like `{date}`, `{order}`, `{site}` and `{items}` are filled in automatically.
+- **Activity log**: everything the app and the dashboard do, newest first — logins, payments, emails, stock changes and settings. Search it or filter by type, and open an order straight from its number.
+
+Customers always see a **Download tickets** button after paying, so they get their tickets even if the email is late. If an email fails, the app retries automatically.
+
+---
+
+## 5. Safety built in
+
+- Prices are always calculated on the server. The browser can't change what is charged, and the captured amount is checked against the order before tickets are sent.
+- Tickets are only sent after PayPal confirms the payment as completed.
+- If a payment can't be confirmed (bad mobile signal, PayPal slow to answer), the buyer is told not to pay again and the PayPal button is switched off. The app keeps checking with PayPal and sends the tickets as soon as the payment is confirmed. If the same email still pays twice within an hour, you get an alert.
+- Orders where money may have moved are never deleted or cancelled by the app without PayPal confirming that nothing was taken. You can't cancel a payment PayPal is still processing.
+- A ticket file can't go to two customers, even with many buyers at the same moment and even if the host runs several copies of the app.
+- One visitor can't hold more than a few unfinished checkouts, so nobody can block your stock.
+- If the server restarts in the middle of a sale, a background job finishes it: it checks with PayPal, sends the tickets, or returns unsold ones to stock.
+- Download links contain a long secret code. The dashboard is password-protected, rate-limited and can't be shown inside other sites.
+- PayPal webhooks are verified with PayPal before they're trusted.
+- Test and live payments are kept apart: each has its own PayPal keys, webhook and ticket folder, and an order always uses the ones of the mode it was made in. Switching to live never sends real tickets to a test order.
+- PayPal keys are checked with PayPal before they're saved, and the secret is never shown again.
+- Simulated payments (`PAYPAL_MODE=mock`) only work on your own computer, never on a public address, and take tickets from the test folder. Live payments need the public https address.
+- Replacing or removing PayPal keys never strands a customer who is paying: the old keys are kept (privately) until the orders made with them are finished. If PayPal can't be asked about a payment that was started, the order is kept and you get an alert instead of a guess.
+
+---
+
+## 6. Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| "Online payment is temporarily unavailable" | The dashboard's PayPal page says why: usually PayPal isn't connected yet for the mode in use. |
+| Uploaded tickets don't appear / the stock count looks wrong | In sandbox mode the app uses the test folder `tickets-sandbox/`, and in live mode the real `tickets/` folder. Check which mode you are in on the dashboard. |
+| PayPal buttons don't appear | On the PayPal page, click **Check connection**. Sandbox keys come from the Sandbox tab and live keys from the Live tab on developer.paypal.com. Ad blockers can block PayPal. |
+| "Payment updates: Waiting" on the PayPal page | The webhook needs the public https address. Set `BASE_URL`, then click **Check connection**. |
+| Emails don't arrive | Settings → Send test email shows the exact error. Check the spam folder. With Gmail you need an App Password. |
+| Payment "pending" | PayPal is reviewing it, or your account must accept the currency. The tickets stay reserved and go out automatically once PayPal completes it. |
+| Times are off by one hour | Morocco moved to GMT on 20 September 2026. Use a current Node.js version, or set `TIMEZONE=UTC`. The dashboard shows the venue time under Settings → Connection status. |
+| Dashboard says it is turned off | Set `ADMIN_PASSWORD` in `.env` (not the example value) and restart. |
+
+Server messages are printed to the app's log (Render: the service's **Logs** tab; cPanel: the log file of the Node.js app; VPS: `journalctl -u booking`).
+
+---
+
+## 7. Backups and updates
+
+- **Back up `data/` and `tickets/` regularly.** They hold all orders, settings and tickets. Code can always be copied again; these folders can't. On Render this happens automatically: the disk is copied every 24 hours and 7 days of copies are kept (service → **Disks** to restore one, which replaces everything on the disk with that day's copy). **If you use `DATABASE_URL`** (section 8), your orders and settings live in Postgres instead — back up the database there, and keep `tickets/` on the disk.
+- To update the app, replace the code files but keep `.env`, `data/` and `tickets/`. On Render, push the new code to GitHub and it deploys by itself.
+
+---
+
+## 8. Optional: Neon Postgres database
+
+The app runs with **no database** by default. If you prefer to keep your data in Postgres,
+set **`DATABASE_URL`** (for example a free [Neon](https://neon.com) database) and the app
+stores the following there instead of in the JSON files:
+
+- orders, the activity log and the small documents: **settings**, **email/SMTP settings + templates**, **PayPal keys** and the low-stock/alert **state**
+- a fingerprint (SHA-256) of every **sold ticket**, so a ticket can never be sold twice, even after a redeploy
+
+Ticket files, the email outbox and the per-file fingerprint cache **stay on disk** — they
+belong with the files themselves, so keep the `tickets/` folder (and a disk on Render).
+
+**How to switch on:**
+1. Create a database at <https://neon.com> (or any Postgres) and copy its connection string.
+2. Set it in the environment: `DATABASE_URL=postgresql://user:password@host/db?sslmode=require`.
+   On Render, add it in the service's **Environment** tab (`DATABASE_URL`). The included
+   `render.yaml` asks for it when you create the Blueprint.
+3. Also set a fixed **`SESSION_SECRET`** when using a database, so every instance encrypts and
+   decrypts the saved SMTP password with the same key (otherwise each instance generates its own
+   `data/secret.key`).
+4. Start (or redeploy) the app. On the first start the app creates its tables and **imports any
+   existing files** (`data/*.json`, `data/orders/*.json`, `data/activity.json`, `data/sold-hashes.log`)
+   into the database, so nothing is lost. The log prints how many rows were imported.
+
+Notes:
+- Only Neon's SQL-over-HTTP endpoint is used, through Node's built-in `fetch` — still **no npm packages**.
+- Leave `DATABASE_URL` empty to go back to plain files (the database is simply ignored).
+- Advanced: `DATABASE_ENDPOINT` overrides the `/sql` URL (for a Neon-compatible proxy).
+
+## 9. For developers
+
+- `npm test` runs the end-to-end tests: PayPal and SMTP are simulated, including declines, pending payments, webhooks, refunds, races for the last tickets, expiry and crash recovery. The database layer is tested too, against a fake `/sql` server.
+- `npm run sample-tickets` creates sample PDFs (marked "not valid") in the test folder `tickets-sandbox/stock/`, used by PayPal Sandbox and simulated payments. It never writes to your real `tickets/` folder.
+- Code: `server.js` (start), `src/booking.js` (order flow), `src/payments.js` (PayPal keys, payment modes, webhook setup), `src/stock.js` (ticket files), `src/neon.js` + `src/dbstore.js` + `src/dbschema.js` (optional Postgres storage), `src/paypal.js`, `src/mailer.js` (SMTP), `src/routes.js` (HTTP), `public/` (booking page), `admin/` (dashboard).
+- Database tables (all prefixed `bp_`): `bp_documents`, `bp_orders`, `bp_activity`, `bp_ticket_sold`, `bp_locks`. They are created automatically; nothing to run by hand.
+- Order statuses: `pending` → `paid` → `fulfilled`. Other statuses: `payment_pending`, `needs_attention`, `expired`, `cancelled`, `failed`, `refunded`, `reversed`.
+- Font: Familjen Grotesk, a grotesque with ink traps close to PolySans (SIL Open Font License, included in `public/fonts/`).
