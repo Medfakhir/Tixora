@@ -838,6 +838,7 @@ ${r.alreadySold.map(function (x) { return h`<li><span>${x.file}<br><small>alread
   <label class="f"><span>Hold tickets during checkout (minutes)</span><input name="holdMinutes" type="number" min="5" max="60" value="${s.holdMinutes}"></label>
   <label class="f"><span>Warn me when stock falls to</span><input name="lowStockThreshold" type="number" min="0" value="${s.lowStockThreshold}"></label>
   <label class="f"><span>Show "Few left" when stock falls to</span><input name="fewLeftThreshold" type="number" min="0" value="${s.fewLeftThreshold}"><p class="hint">Yellow label on the booking calendar. Set 0 to hide it.</p></label>
+  <label class="f"><span>Show "Few left" only within this many days</span><input name="fewLeftDays" type="number" min="0" max="730" value="${s.fewLeftDays}"><p class="hint">e.g. 3 = today and the next 2 days. Set 0 for every day.</p></label>
 </div></section>
 <section class="panel"><h2>Booking page and email text</h2><div class="form-grid">
   <label class="f"><span>Site name</span><input name="siteName" maxlength="80" value="${s.siteName}"></label>
@@ -907,6 +908,7 @@ ${r.alreadySold.map(function (x) { return h`<li><span>${x.file}<br><small>alread
           holdMinutes: Number(form.holdMinutes.value),
           lowStockThreshold: Number(form.lowStockThreshold.value),
           fewLeftThreshold: Number(form.fewLeftThreshold.value),
+          fewLeftDays: Number(form.fewLeftDays.value),
           siteName: form.siteName.value,
           openingHours: form.openingHours.value,
           tagline: form.tagline.value,

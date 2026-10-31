@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
   holdMinutes: 15,
   lowStockThreshold: 20,
   fewLeftThreshold: 10,
+  fewLeftDays: 3,
   openingHours: 'Open daily, 9:00 – 17:00',
   address: 'Rue Riad Zitoun el Jdid, Medina, Marrakech',
   notice: '',
@@ -107,6 +108,7 @@ function validateSettings(input, current) {
   intField('holdMinutes', 5, 60, 'Checkout hold time');
   intField('lowStockThreshold', 0, 100000, 'Low-stock alert level');
   intField('fewLeftThreshold', 0, 100000, 'Few-left level');
+  intField('fewLeftDays', 0, 730, 'Few-left day window');
 
   if (input.sameDayCutoff !== undefined) {
     const t = String(input.sameDayCutoff || '').trim();

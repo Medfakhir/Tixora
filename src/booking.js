@@ -304,7 +304,11 @@ class Booking {
         remaining[t.id] = Math.min(n, s.maxTicketsPerOrder);
         total += n;
       }
-      days[d] = total > 0 ? { status: 'open', remaining, few: s.fewLeftThreshold > 0 && total <= s.fewLeftThreshold } : { status: 'soldout' };
+      const few =
+        s.fewLeftThreshold > 0 &&
+        total <= s.fewLeftThreshold &&
+        (s.fewLeftDays <= 0 || dates.diffDays(now.date, d) < s.fewLeftDays);
+      days[d] = total > 0 ? { status: 'open', remaining, few } : { status: 'soldout' };
     }
     return { month, today: now.date, days };
   }

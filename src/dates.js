@@ -46,6 +46,13 @@ function addDays(ymd, n) {
   return d.toISOString().slice(0, 10);
 }
 
+/** Whole days from `fromYmd` to `toYmd` (positive when `toYmd` is later). */
+function diffDays(fromYmd, toYmd) {
+  const a = new Date(fromYmd + 'T12:00:00Z').getTime();
+  const b = new Date(toYmd + 'T12:00:00Z').getTime();
+  return Math.round((b - a) / 86400000);
+}
+
 /** 0 = Sunday ... 6 = Saturday */
 function weekday(ymd) {
   return new Date(ymd + 'T12:00:00Z').getUTCDay();
@@ -74,4 +81,4 @@ function isValidTime(s) {
   return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
 }
 
-module.exports = { inTz, isValidYmd, isValidMonth, addDays, weekday, monthDates, formatLong, isValidTime };
+module.exports = { inTz, isValidYmd, isValidMonth, addDays, diffDays, weekday, monthDates, formatLong, isValidTime };
