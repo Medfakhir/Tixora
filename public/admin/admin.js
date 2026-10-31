@@ -837,6 +837,7 @@ ${r.alreadySold.map(function (x) { return h`<li><span>${x.file}<br><small>alread
   <label class="f"><span>Stop same-day sales at</span><input name="sameDayCutoff" type="time" value="${s.sameDayCutoff}"><p class="hint">Venue time (${sys.timezone}). Leave empty to sell until midnight.</p></label>
   <label class="f"><span>Hold tickets during checkout (minutes)</span><input name="holdMinutes" type="number" min="5" max="60" value="${s.holdMinutes}"></label>
   <label class="f"><span>Warn me when stock falls to</span><input name="lowStockThreshold" type="number" min="0" value="${s.lowStockThreshold}"></label>
+  <label class="f"><span>Show "Few left" when stock falls to</span><input name="fewLeftThreshold" type="number" min="0" value="${s.fewLeftThreshold}"><p class="hint">Yellow label on the booking calendar. Set 0 to hide it.</p></label>
 </div></section>
 <section class="panel"><h2>Booking page and email text</h2><div class="form-grid">
   <label class="f"><span>Site name</span><input name="siteName" maxlength="80" value="${s.siteName}"></label>
@@ -905,6 +906,7 @@ ${r.alreadySold.map(function (x) { return h`<li><span>${x.file}<br><small>alread
           sameDayCutoff: form.sameDayCutoff.value,
           holdMinutes: Number(form.holdMinutes.value),
           lowStockThreshold: Number(form.lowStockThreshold.value),
+          fewLeftThreshold: Number(form.fewLeftThreshold.value),
           siteName: form.siteName.value,
           openingHours: form.openingHours.value,
           tagline: form.tagline.value,

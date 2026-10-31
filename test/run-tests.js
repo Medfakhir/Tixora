@@ -861,6 +861,25 @@ async function main() {
     await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { closedWeekdays: [] } });
   });
 
+  await test('"Few left" threshold is configurable from settings', async () => {
+    const month = day(5).slice(0, 7);
+    const cur = (await req('GET', '/api/admin/settings', { cookie: adminCookie })).data.settings;
+    assert.equal(cur.fewLeftThreshold, 10, 'default threshold');
+    // A high threshold flags every open day.
+    await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { fewLeftThreshold: 100000 } });
+    const high = await req('GET', '/api/availability?month=' + month);
+    assert.equal(high.data.days[day(5)].few, true);
+    // 0 turns the label off everywhere.
+    await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { fewLeftThreshold: 0 } });
+    const off = await req('GET', '/api/availability?month=' + month);
+    assert.equal(off.data.days[day(5)].few, false);
+    // Invalid values are rejected.
+    const bad = await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { fewLeftThreshold: -1 } });
+    assert.equal(bad.status, 400);
+    // Restore the default for the tests that follow.
+    await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { fewLeftThreshold: 10 } });
+  });
+
   await test('same-day cut-off closes today for online sales', async () => {
     await req('PUT', '/api/admin/settings', { cookie: adminCookie, json: { sameDayCutoff: '00:00' } });
     const av = await req('GET', '/api/availability?month=' + today().slice(0, 7));
